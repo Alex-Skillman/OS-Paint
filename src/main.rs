@@ -6,6 +6,9 @@ use macroquad::input::KeyCode::C;
 use macroquad::input::MouseButton::Left;
 use macroquad::input::MouseButton::Right;
 
+// add in matchbox_signaling
+// Used for p2p between clients
+
 fn window_conf() -> Conf {
     Conf {
         window_title: "OS-Paint".to_owned(),
