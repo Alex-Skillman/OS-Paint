@@ -1,12 +1,8 @@
-use macroquad::experimental::camera::mouse;
 use macroquad::input::MouseButton;
 use macroquad::prelude::*;
-use macroquad::rand::*;
 use macroquad::color::Color;
-use macroquad::input::KeyCode::C;
-
-// add in matchbox_signaling
-// Used for p2p between clients
+use matchbox_socket::{WebRtcSocket, PeerState};
+use std::{string, time::Duration};
 
 fn window_conf() -> Conf {
     Conf {
@@ -29,6 +25,13 @@ struct Stroke {
 
 #[macroquad::main("OS-Paint")]
 async fn main() {
+    //This inits the address to a local signalling server
+    // THIS WILL ONLY WORK LOCALLY RIGHT NOW
+    let(mut socket, loop_fut) = WebRtcSocket::new_reliable("ws://localhost:3536/my_room");
+
+    // Background task that drives the message loop
+    tokio::spawn(loop_fut);
+
     // This initalizes the vector of balls drawn
     let mut strokes: Vec<Stroke> = Vec::new();
 
@@ -36,6 +39,26 @@ async fn main() {
     let radius: u16 = 10;
 
     loop {
+        // Detect peers joining/leaving
+        for (peer, state) in socket.update_peers() {
+            match state {
+                PeerState::Connected => println!("Peer Joined"),
+                PeerState::Disconnected => println!("Peer Left"),
+            }
+        }
+
+        // Read incoming messages from peers
+        for (peer, packet) in socket.channel_mut(0).receive() {
+            println!("From {peer:?}: {:?}", String::from_utf8_lossy(&packet))
+        }
+
+        // Send a message to all peers
+        let peers: Vec<_> = socket.connected_peers().collect();
+        for peer in peers {
+            socket.channel_mut(0).send(b"Hello".to_vec().into_boxed_slice(), peer);
+        }
+
+
         // Get the mouse position each frame
         let (mouse_x, mouse_y) = mouse_position();
 
@@ -43,7 +66,7 @@ async fn main() {
         draw_fps();
 
         if is_mouse_button_pressed(MouseButton::Left) {
-            // If the button is pressed then push a new Stroke to the vector
+            // If the button is pressed then push a new Stroke to the vector, string
             strokes.push(Stroke{
                 size: radius,
                 color: YELLOW,
@@ -83,6 +106,7 @@ async fn main() {
         println!("{}", strokes.len());
 
 
-        next_frame().await; 
+        next_frame().await;
+        tokio::time::sleep(Duration::from_millis(16)).await;
     }
 }
