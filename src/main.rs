@@ -1,10 +1,9 @@
+use macroquad::experimental::camera::mouse;
 use macroquad::input::MouseButton;
 use macroquad::prelude::*;
 use macroquad::rand::*;
 use macroquad::color::Color;
 use macroquad::input::KeyCode::C;
-use macroquad::input::MouseButton::Left;
-use macroquad::input::MouseButton::Right;
 
 // add in matchbox_signaling
 // Used for p2p between clients
@@ -21,18 +20,17 @@ fn window_conf() -> Conf {
     }
 }
 
-struct figure {
+struct Stroke {
     size: u16,
-    x: u16,
-    y: u16,
     color: Color,
     layer: i8, //Unused for now but may add later
+    coordinates: Vec<(u16, u16)>,
 }
 
 #[macroquad::main("OS-Paint")]
 async fn main() {
     // This initalizes the vector of balls drawn
-    let mut figures: Vec<figure> = Vec::new();
+    let mut strokes: Vec<Stroke> = Vec::new();
 
     // Hardcoded start radius for balls
     let radius: u16 = 12;
@@ -44,22 +42,28 @@ async fn main() {
         // Draw the current fps on the screen
         draw_fps();
 
-        if is_mouse_button_down(MouseButton::Left) {
-            figures.push(figure{
+        if is_mouse_button_pressed(MouseButton::Left) {
+            // If the button is pressed then push a new Stroke to the vector
+            strokes.push(Stroke{
                 size: radius,
-                x: mouse_x as u16,
-                y: mouse_y as u16,
                 color: YELLOW,
                 layer: 1,
-        })
-        }
-        
-        // This loop goes through all figures in figure and draws them to the frame buffer
-        for figure in figures.iter() {
-            draw_circle(figure.x as f32, figure.y as f32, figure.size as f32, YELLOW)
+                coordinates: vec![(mouse_x as u16, mouse_y as u16)]
+            });
+        } else if is_mouse_button_down(MouseButton::Left) {
+            if let Some(current_stroke) = strokes.last_mut() {
+                // Push new coordinates when the mouse buttne is held down
+                current_stroke.coordinates.push((mouse_x as u16, mouse_y as u16))
+            }
         }
 
-        println!("{}", figures.len());
+        for drawn_stroke in strokes.iter() {
+            for (x,y) in drawn_stroke.coordinates.iter() {
+                draw_circle(*x as f32, *y as f32, drawn_stroke.size as f32, drawn_stroke.color);
+            }
+        }
+
+        println!("{}", strokes.len());
 
 
         next_frame().await; 
