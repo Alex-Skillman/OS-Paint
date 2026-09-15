@@ -19,9 +19,9 @@ fn window_conf() -> Conf {
 }
 
 struct figure {
-    size: f32,
-    x: f32,
-    y: f32,
+    size: u16,
+    x: u16,
+    y: u16,
     color: Color,
     layer: i8, //Unused for now but may add later
 }
@@ -32,7 +32,7 @@ async fn main() {
     let mut figures: Vec<figure> = Vec::new();
 
     // Hardcoded start radius for balls
-    let radius: f32 = 12.0;
+    let radius: u16 = 12;
 
     loop {
         // Get the mouse position each frame
@@ -44,17 +44,20 @@ async fn main() {
         if is_mouse_button_down(MouseButton::Left) {
             figures.push(figure{
                 size: radius,
-                x: mouse_x,
-                y: mouse_y,
+                x: mouse_x as u16,
+                y: mouse_y as u16,
                 color: YELLOW,
                 layer: 1,
         })
         }
         
         // This loop goes through all figures in figure and draws them to the frame buffer
-        for figure in figures.iter_mut() {
-            draw_circle(figure.x, figure.y, figure.size, YELLOW)
+        for figure in figures.iter() {
+            draw_circle(figure.x as f32, figure.y as f32, figure.size as f32, YELLOW)
         }
+
+        println!("{}", figures.len());
+
 
         next_frame().await; 
     }
