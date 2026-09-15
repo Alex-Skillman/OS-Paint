@@ -33,7 +33,7 @@ async fn main() {
     let mut strokes: Vec<Stroke> = Vec::new();
 
     // Hardcoded start radius for balls
-    let radius: u16 = 12;
+    let radius: u16 = 10;
 
     loop {
         // Get the mouse position each frame
@@ -58,8 +58,25 @@ async fn main() {
         }
 
         for drawn_stroke in strokes.iter() {
-            for (x,y) in drawn_stroke.coordinates.iter() {
-                draw_circle(*x as f32, *y as f32, drawn_stroke.size as f32, drawn_stroke.color);
+
+            let coords = &drawn_stroke.coordinates;
+
+            for i in 0..coords.len() {
+                // Find the x and y of each dot in the stroke for each coordinate
+                let(x,y) = coords[i];
+                // Draw the dot for each coordinate in the stroke
+                draw_circle(x as f32, y as f32, drawn_stroke.size as f32, drawn_stroke.color);
+
+                if i > 0 {
+                    let (prev_x, prev_y) = coords[i-1];
+                    // Draw the connecting line
+                    draw_line(
+                        prev_x as f32, prev_y as f32,
+                        x as f32, y as f32,
+                        drawn_stroke.size as f32 * 2.0, // Muliply by to match the radius of the circle
+                        drawn_stroke.color,
+                    );
+                }
             }
         }
 
