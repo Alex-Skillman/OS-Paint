@@ -1,7 +1,6 @@
 use matchbox_socket::{WebRtcSocket, PeerState};
 use macroquad::color::Color;
 use serde::{Serialize, Deserialize};
-use bincode::Serialize;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct SerColor {
@@ -12,12 +11,12 @@ pub struct SerColor {
 }
 
 #[derive(Serialize, Deserialize)]
-struct DrawPacker {
-    point: (u16, u16),
-    is_new_stroke: bool,
-    size: Option<u16>,
-    color: Option<SerColor>,
-    layer: Option<i8>
+pub struct DrawPacket {
+    pub point: (u16, u16),
+    pub is_new_stroke: bool,
+    pub size: Option<u16>,
+    pub color: Option<SerColor>,
+    pub layer: Option<i8>
 }
 
 impl From<Color> for SerColor {
