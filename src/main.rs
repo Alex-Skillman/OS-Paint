@@ -8,6 +8,9 @@ use stroke::Stroke;
 use std::time::Duration;
 use crate::{input::stroke_drawing, network::peer_state};
 use crate::render::render_stroke;
+use crate::network::handle_incoming;
+use std::collections::HashMap;
+use matchbox_socket::PeerId;
 use matchbox_socket::{WebRtcSocket, PeerState};
 
 fn window_conf() -> Conf {
@@ -43,14 +46,14 @@ async fn main() {
     // Hardcoded start radius for balls
     let radius: u16 = 10;
 
+    let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
+
     loop {
         // Prints if a peer connects or disonnects
         peer_state(&mut socket);
 
         // // Read incoming messages from peers
-        for (peer, packet) in socket.channel_mut(0).receive() {
-            println!("From {peer:?}: {:?}", String::from_utf8_lossy(&packet))
-        }
+        handle_incoming(&mut socket, &mut strokes, &mut peer_current_stroke);
 
         // Send a message to all peers
         let peers: Vec<_> = socket.connected_peers().collect();
@@ -62,7 +65,7 @@ async fn main() {
         draw_fps();
 
         // Gets the user input to draw
-        stroke_drawing(&mut strokes, radius);
+        stroke_drawing(&mut strokes, &mut socket, radius);
 
         // Draws the strokes onto the screen
         render_stroke(&mut strokes);

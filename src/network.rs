@@ -1,6 +1,9 @@
 use matchbox_socket::{WebRtcSocket, PeerState};
 use macroquad::color::Color;
 use serde::{Serialize, Deserialize};
+use std::collections::HashMap;
+use matchbox_socket::PeerId;
+use crate::stroke::Stroke;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct SerColor {
@@ -46,8 +49,23 @@ pub fn send_packet(socket: &mut WebRtcSocket, packet: &DrawPacket) {
         socket.channel_mut(0).send(bytes.clone().into_boxed_slice(), peer);
     }
 }
-pub fn handle_incoming(socket: &mut WebRtcSocket,) {
+pub fn handle_incoming(socket: &mut WebRtcSocket, strokes: &mut Vec<Stroke>, peer_current_stroke: &mut HashMap<PeerId, usize>) {
     for (peer, packet_bytes) in socket.channel_mut(0).receive() {
-        // DESERIALIZE HERE
+        match bincode::deserialize::<DrawPacket>(&packet_bytes) {
+            Ok(packet) => {
+                if packet.is_new_stroke {
+                    strokes.push(Stroke {
+                        size: packet.size.unwrap(),
+                        color: packet.color.unwrap().into(),
+                        layer: packet.layer.unwrap(),
+                        coordinates: vec![packet.point],
+                    });
+                    peer_current_stroke.insert(peer,strokes.iter().len() -1);
+                } else if let Some(&idx) = peer_current_stroke.get(&peer) {
+                    strokes[idx].coordinates.push(packet.point);
+                }
+            }
+            Err(e) => eprintln!("Bad packet")
+        }
     }
 }
