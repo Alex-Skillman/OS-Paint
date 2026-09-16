@@ -5,10 +5,10 @@ mod render;
 
 use macroquad::prelude::*;
 use stroke::Stroke;
-use std::{string, time::Duration};
-use crate::input::stroke_drawing;
-use crate::network::tokio_runtime;
+use std::time::Duration;
+use crate::{input::stroke_drawing, network::peer_state};
 use crate::render::render_stroke;
+use matchbox_socket::{WebRtcSocket, PeerState};
 
 fn window_conf() -> Conf {
     Conf {
@@ -26,8 +26,14 @@ fn window_conf() -> Conf {
 async fn main() {
     // Creates a tokio runtime
     // Function only works for local host and does not connect to server
-    tokio_runtime();
+    
+    // Create a tokio runtime inside the loop
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let _guard = rt.enter();
 
+
+        // THIS WILL ONLY WORK LOCALLY RIGHT NOW
+    let(mut socket, loop_fut) = WebRtcSocket::new_reliable("ws://localhost:3536/my_room");
     // Background task that drives the message loop
     tokio::spawn(loop_fut);
 
@@ -38,15 +44,10 @@ async fn main() {
     let radius: u16 = 10;
 
     loop {
-        // Detect peers joining/leaving
-        for (peer, state) in socket.update_peers() {
-            match state {
-                PeerState::Connected => println!("Peer Joined"),
-                PeerState::Disconnected => println!("Peer Left"),
-            }
-        }
+        // Prints if a peer connects or disonnects
+        peer_state(&mut socket);
 
-        // Read incoming messages from peers
+        // // Read incoming messages from peers
         for (peer, packet) in socket.channel_mut(0).receive() {
             println!("From {peer:?}: {:?}", String::from_utf8_lossy(&packet))
         }
