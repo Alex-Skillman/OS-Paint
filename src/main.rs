@@ -1,8 +1,14 @@
-use macroquad::input::MouseButton;
+mod stroke;
+mod network;
+mod input;
+mod render;
+
 use macroquad::prelude::*;
-use macroquad::color::Color;
-use matchbox_socket::{WebRtcSocket, PeerState};
+use stroke::Stroke;
 use std::{string, time::Duration};
+use crate::input::stroke_drawing;
+use crate::network::tokio_runtime;
+use crate::render::render_stroke;
 
 fn window_conf() -> Conf {
     Conf {
@@ -16,22 +22,11 @@ fn window_conf() -> Conf {
     }
 }
 
-struct Stroke {
-    size: u16,
-    color: Color,
-    layer: i8, //Unused for now but may add later
-    coordinates: Vec<(u16, u16)>,
-}
-
 #[macroquad::main("OS-Paint")]
 async fn main() {
-    // Create  atokio runtime inside the loop
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let _guard = rt.enter();
-
-    //This inits the address to a local signalling server
-    // THIS WILL ONLY WORK LOCALLY RIGHT NOW
-    let(mut socket, loop_fut) = WebRtcSocket::new_reliable("ws://localhost:3536/my_room");
+    // Creates a tokio runtime
+    // Function only works for local host and does not connect to server
+    tokio_runtime();
 
     // Background task that drives the message loop
     tokio::spawn(loop_fut);
@@ -62,55 +57,16 @@ async fn main() {
             socket.channel_mut(0).send(b"Hello".to_vec().into_boxed_slice(), peer);
         }
 
-
-        // Get the mouse position each frame
-        let (mouse_x, mouse_y) = mouse_position();
-
         // Draw the current fps on the screen
         draw_fps();
 
-        if is_mouse_button_pressed(MouseButton::Left) {
-            // If the button is pressed then push a new Stroke to the vector, string
-            strokes.push(Stroke{
-                size: radius,
-                color: YELLOW,
-                layer: 1,
-                coordinates: vec![(mouse_x as u16, mouse_y as u16)]
-            });
-        } else if is_mouse_button_down(MouseButton::Left) {
-            if let Some(current_stroke) = strokes.last_mut() {
-                // Push new coordinates when the mouse buttne is held down
-                current_stroke.coordinates.push((mouse_x as u16, mouse_y as u16))
-            }
-        }
+        // Gets the user input to draw
+        stroke_drawing(&mut strokes, radius);
 
-        for drawn_stroke in strokes.iter() {
-
-            let coords = &drawn_stroke.coordinates;
-
-            for i in 0..coords.len() {
-                // Find the x and y of each dot in the stroke for each coordinate
-                let(x,y) = coords[i];
-                // Draw the dot for each coordinate in the stroke
-                draw_circle(x as f32, y as f32, drawn_stroke.size as f32, drawn_stroke.color);
-
-                if i > 0 {
-                    let (prev_x, prev_y) = coords[i-1];
-                    // Draw the connecting line
-                    draw_line(
-                        prev_x as f32, prev_y as f32,
-                        x as f32, y as f32,
-                        drawn_stroke.size as f32 * 2.0, // Muliply by to match the radius of the circle
-                        drawn_stroke.color,
-                    );
-                }
-            }
-        }
-
-        println!("{}", strokes.len());
-
+        // Draws the strokes onto the screen
+        render_stroke(&mut strokes);
 
         next_frame().await;
-        tokio::time::sleep(Duration::from_millis(16)).await;
+        std::thread::sleep(Duration::from_millis(16));
     }
 }
