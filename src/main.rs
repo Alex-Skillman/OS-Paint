@@ -46,6 +46,9 @@ async fn main() {
     // Hardcoded start radius for balls
     let radius: u16 = 10;
 
+    // Initalize a variable for the current tool
+    let mut current_tool: Tool = Tool::Pen;
+
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
 
     loop {

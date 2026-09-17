@@ -42,3 +42,5 @@ pub fn stroke_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radi
                 send_packet(socket, &packet);
             }
     }
+
+pub fn 

@@ -1,5 +1,10 @@
 use macroquad::color::Color;
 
+#[derive(PartialEq, Clone, Copy)]
+pub enum Tool {
+    Pen,
+    Eraser,
+}
 pub struct Stroke {
     pub size: u16,
     pub color: Color,
