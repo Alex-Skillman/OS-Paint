@@ -1,58 +1,69 @@
+use crate::network::DrawPacket;
+use crate::network::{ErasePacket, NetworkPacket, send_packet};
+use crate::stroke::{Stroke, Tool};
+use macroquad::color::YELLOW;
 use macroquad::input::MouseButton;
 use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position};
-use macroquad::color::YELLOW;
-use crate::network::{send_packet, ErasePacket, NetworkPacket};
-use crate::stroke::{Stroke, Tool};
-use crate::network::DrawPacket;
 use matchbox_socket::WebRtcSocket;
 
-pub fn handle_tool(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, eraser_size: u16, current_tool: Tool) {
+pub fn handle_tool(
+    strokes: &mut Vec<Stroke>,
+    socket: &mut WebRtcSocket,
+    radius: u16,
+    eraser_size: u16,
+    current_tool: Tool,
+) -> bool {
     match current_tool {
         Tool::Pen => pen_drawing(strokes, socket, radius),
         Tool::Eraser => erasing(strokes, socket, eraser_size),
     }
 }
 
-fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16) {
+fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16) -> bool {
     let (mouse_x, mouse_y) = mouse_position();
-    
+
     if is_mouse_button_pressed(MouseButton::Left) {
-                // If the button is pressed then push a new Stroke to the vector, string
-                strokes.push(Stroke{
-                    size: radius,
-                    color: YELLOW,
-                    layer: 1,
-                    coordinates: vec![(mouse_x as u16, mouse_y as u16)]
-                });
-                let packet = DrawPacket {
-                    point: (mouse_x as u16, mouse_y as u16),
-                    is_new_stroke: true,
-                    size: Some(radius),
-                    color: Some(YELLOW.into()),
-                    layer: Some(1),
-                };
-                send_packet(socket, &NetworkPacket::Draw(packet));
+        // If the button is pressed then push a new Stroke to the vector, string
+        strokes.push(Stroke {
+            size: radius,
+            color: YELLOW,
+            layer: 1,
+            coordinates: vec![(mouse_x as u16, mouse_y as u16)],
+        });
+        let packet = DrawPacket {
+            point: (mouse_x as u16, mouse_y as u16),
+            is_new_stroke: true,
+            size: Some(radius),
+            color: Some(YELLOW.into()),
+            layer: Some(1),
+        };
+        send_packet(socket, &NetworkPacket::Draw(packet));
+        return true;
+    } else if is_mouse_button_down(MouseButton::Left) {
+        if let Some(current_stroke) = strokes.last_mut() {
+            // Push new coordinates when the mouse buttne is held down
+            current_stroke
+                .coordinates
+                .push((mouse_x as u16, mouse_y as u16))
+        }
 
-            } else if is_mouse_button_down(MouseButton::Left) {
-                if let Some(current_stroke) = strokes.last_mut() {
-                    // Push new coordinates when the mouse buttne is held down
-                    current_stroke.coordinates.push((mouse_x as u16, mouse_y as u16))
-                }
-
-                let packet = DrawPacket {
-                    point: (mouse_x as u16, mouse_y as u16),
-                    is_new_stroke: false,
-                    size: None,
-                    color: None,
-                    layer: None,
-                };
-                send_packet(socket, &NetworkPacket::Draw(packet));
-            }
+        let packet = DrawPacket {
+            point: (mouse_x as u16, mouse_y as u16),
+            is_new_stroke: false,
+            size: None,
+            color: None,
+            layer: None,
+        };
+        send_packet(socket, &NetworkPacket::Draw(packet));
+        return true;
     }
 
-fn erasing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) {
+    false
+}
+
+fn erasing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) -> bool {
     if !is_mouse_button_down(MouseButton::Left) {
-        return;
+        return false;
     }
 
     let (eraser_x, eraser_y) = mouse_position();
@@ -64,7 +75,10 @@ fn erasing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u1
             size: eraser_size,
         };
         send_packet(socket, &NetworkPacket::Erase(packet));
+        return true;
     }
+
+    false
 }
 
 pub fn erase_at(strokes: &mut Vec<Stroke>, point: (u16, u16), eraser_size: u16) -> bool {

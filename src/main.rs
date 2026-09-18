@@ -1,24 +1,27 @@
-mod stroke;
-mod network;
 mod input;
+mod network;
 mod render;
+mod stroke;
 
-use macroquad::prelude::*;
-use stroke::{Stroke, Tool};
-use std::time::Duration;
 use crate::input::handle_tool;
+use crate::network::{handle_incoming, peer_state, send_canvas_snapshot};
 use crate::render::render_stroke;
-use crate::network::{handle_incoming, peer_state};
-use std::collections::HashMap;
+use macroquad::prelude::*;
 use matchbox_socket::PeerId;
 use matchbox_socket::WebRtcSocket;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+use stroke::{Stroke, Tool};
 
 fn window_conf() -> Conf {
     Conf {
         window_title: "OS-Paint".to_owned(),
         window_width: 800,
         // 0 turns off V-Sync, forcing the highest FPS possible
-        platform: miniquad::conf::Platform {swap_interval: Some(0), ..Default::default()},
+        platform: miniquad::conf::Platform {
+            swap_interval: Some(0),
+            ..Default::default()
+        },
         window_height: 600,
         window_resizable: true,
         ..Default::default()
@@ -29,14 +32,13 @@ fn window_conf() -> Conf {
 async fn main() {
     // Creates a tokio runtime
     // Function only works for local host and does not connect to server
-    
+
     // Create a tokio runtime inside the loop
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
 
-
-        // THIS WILL ONLY WORK LOCALLY RIGHT NOW
-    let(mut socket, loop_fut) = WebRtcSocket::new_reliable("ws://localhost:3536/my_room");
+    // THIS WILL ONLY WORK LOCALLY RIGHT NOW
+    let (mut socket, loop_fut) = WebRtcSocket::new_reliable("ws://localhost:3536/my_room");
     // Background task that drives the message loop
     tokio::spawn(loop_fut);
 
@@ -54,13 +56,27 @@ async fn main() {
 
     // TEMP: Eraser hardcoded size
     let eraser_size: u16 = 25;
-    
+
+    let snapshot_interval = Duration::from_secs(30);
+    let mut last_snapshot_sent = Instant::now();
+    let mut canvas_revision: u64 = 0;
+
     loop {
         // Prints if a peer connects or disonnects
-        peer_state(&mut socket);
+        peer_state(&mut socket, &strokes, canvas_revision);
 
         // // Read incoming messages from peers
-        handle_incoming(&mut socket, &mut strokes, &mut peer_current_stroke);
+        handle_incoming(
+            &mut socket,
+            &mut strokes,
+            &mut peer_current_stroke,
+            &mut canvas_revision,
+        );
+
+        if last_snapshot_sent.elapsed() >= snapshot_interval {
+            send_canvas_snapshot(&mut socket, &strokes, canvas_revision);
+            last_snapshot_sent = Instant::now();
+        }
 
         // Draw the current fps on the screen
         draw_fps();
@@ -78,7 +94,9 @@ async fn main() {
         }
 
         // Gets the user input to draw
-        handle_tool(&mut strokes, &mut socket, radius, eraser_size, current_tool);
+        if handle_tool(&mut strokes, &mut socket, radius, eraser_size, current_tool) {
+            canvas_revision += 1;
+        }
 
         // Draws the strokes onto the screen
         render_stroke(&mut strokes);
