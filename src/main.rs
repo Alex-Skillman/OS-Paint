@@ -5,14 +5,13 @@ mod render;
 
 use macroquad::prelude::*;
 use stroke::{Stroke, Tool};
-use std::thread::current;
 use std::time::Duration;
 use crate::input::handle_tool;
 use crate::render::render_stroke;
 use crate::network::{handle_incoming, peer_state};
 use std::collections::HashMap;
 use matchbox_socket::PeerId;
-use matchbox_socket::{WebRtcSocket, PeerState};
+use matchbox_socket::WebRtcSocket;
 
 fn window_conf() -> Conf {
     Conf {
@@ -53,9 +52,6 @@ async fn main() {
     // Find the last tool used
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
 
-    // Find the last key pressed
-    let mut last_key_press: char = '\0'; 
-
     // TEMP: Eraser hardcoded size
     let eraser_size: u16 = 25;
     
@@ -73,14 +69,16 @@ async fn main() {
         let last_key_press = get_char_pressed();
 
         // Match last keypress to a tool
-        match last_key_press {
-            Some('p') => current_tool = Tool::Pen,
-            Some('e') => current_tool = Tool::Eraser,
-            _ => current_tool = Tool::Pen,
+        if let Some(key) = last_key_press {
+            match key {
+                'p' => current_tool = Tool::Pen,
+                'e' => current_tool = Tool::Eraser,
+                _ => {}
+            }
         }
 
         // Gets the user input to draw
-        handle_tool(&mut strokes, &mut socket, radius, current_tool);
+        handle_tool(&mut strokes, &mut socket, radius, eraser_size, current_tool);
 
         // Draws the strokes onto the screen
         render_stroke(&mut strokes);

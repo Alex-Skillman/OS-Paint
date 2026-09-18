@@ -1,20 +1,19 @@
 use macroquad::input::MouseButton;
-use macroquad::input::{is_mouse_button_pressed, is_mouse_button_down, mouse_position};
+use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position};
 use macroquad::color::YELLOW;
-use crate::network::send_packet;
+use crate::network::{send_packet, ErasePacket, NetworkPacket};
 use crate::stroke::{Stroke, Tool};
 use crate::network::DrawPacket;
 use matchbox_socket::WebRtcSocket;
 
-pub fn handle_tool(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, current_tool: Tool) {
+pub fn handle_tool(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, eraser_size: u16, current_tool: Tool) {
     match current_tool {
-        Tool::Pen => pen_drawing(strokes, socket, radius, current_tool),
-        Tool::Eraser => erasing(strokes),
-        _ => panic!("Invalid tool. How did you manage that???"),
+        Tool::Pen => pen_drawing(strokes, socket, radius),
+        Tool::Eraser => erasing(strokes, socket, eraser_size),
     }
 }
 
-fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, curent_tool: Tool) {
+fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16) {
     let (mouse_x, mouse_y) = mouse_position();
     
     if is_mouse_button_pressed(MouseButton::Left) {
@@ -32,7 +31,7 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
                     color: Some(YELLOW.into()),
                     layer: Some(1),
                 };
-                send_packet(socket, &packet);
+                send_packet(socket, &NetworkPacket::Draw(packet));
 
             } else if is_mouse_button_down(MouseButton::Left) {
                 if let Some(current_stroke) = strokes.last_mut() {
@@ -47,42 +46,55 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
                     color: None,
                     layer: None,
                 };
-                send_packet(socket, &packet);
+                send_packet(socket, &NetworkPacket::Draw(packet));
             }
     }
 
-fn erasing (strokes: &mut Vec<Stroke>) {
+fn erasing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) {
+    if !is_mouse_button_down(MouseButton::Left) {
+        return;
+    }
+
+    let (eraser_x, eraser_y) = mouse_position();
+    let point = (eraser_x as u16, eraser_y as u16);
+
+    if erase_at(strokes, point, eraser_size) {
+        let packet = ErasePacket {
+            point,
+            size: eraser_size,
+        };
+        send_packet(socket, &NetworkPacket::Erase(packet));
+    }
+}
+
+pub fn erase_at(strokes: &mut Vec<Stroke>, point: (u16, u16), eraser_size: u16) -> bool {
+    let (eraser_x, eraser_y) = (point.0 as f32, point.1 as f32);
     let mut new_strokes: Vec<Stroke> = Vec::new();
+    let mut erased = false;
 
     for stroke in strokes.iter_mut() {
         let mut loop_accum: usize = 0;
         while loop_accum < stroke.coordinates.len() {
-            if loop_accum == 0 {
-                loop_accum += 1;
-                continue;
-            }
-
-            let (last_x, last_y): (u16, u16) = stroke.coordinates[loop_accum - 1];
             let (x, y): (u16, u16) = stroke.coordinates[loop_accum];
 
-            let dx = last_x as f32 - x as f32;
-            let dy = last_y as f32 - y as f32;
+            let dx = eraser_x - x as f32;
+            let dy = eraser_y - y as f32;
             let dist = ((dx * dx) + (dy * dy)).sqrt();
 
-            let threshold = (stroke.size + 25) as f32;
+            let threshold = (stroke.size + eraser_size) as f32;
 
             if dist < threshold {
-                // Split: everything from loop_accum onward becomes a new stroke
+                erased = true;
                 let remaining = stroke.coordinates.split_off(loop_accum);
                 if remaining.len() > 1 {
                     new_strokes.push(Stroke {
                         size: stroke.size,
                         color: stroke.color,
                         layer: stroke.layer,
-                        coordinates: remaining[1..].to_vec(), // skip the erased point itself
+                        coordinates: remaining[1..].to_vec(),
                     });
                 }
-                break; // stop processing this stroke, it's been split
+                break;
             } else {
                 loop_accum += 1;
             }
@@ -90,4 +102,6 @@ fn erasing (strokes: &mut Vec<Stroke>) {
     }
 
     strokes.append(&mut new_strokes);
+    strokes.retain(|s| s.coordinates.len() > 1);
+    erased
 }

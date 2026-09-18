@@ -4,6 +4,7 @@ use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use matchbox_socket::PeerId;
 use crate::stroke::Stroke;
+use crate::input::erase_at;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct SerColor {
@@ -22,6 +23,18 @@ pub struct DrawPacket {
     pub layer: Option<i8>
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct ErasePacket {
+    pub point: (u16, u16),
+    pub size: u16,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum NetworkPacket {
+    Draw(DrawPacket),
+    Erase(ErasePacket),
+}
+
 impl From<Color> for SerColor {
     fn from(c: Color) -> Self {
         SerColor { r: c.r, g: c.g, b: c.b, a: c.a }
@@ -34,7 +47,7 @@ impl From<SerColor> for Color {
 }
 
 pub fn peer_state(socket: &mut WebRtcSocket) {
-    for (peer, state) in socket.update_peers() {
+    for (_peer, state) in socket.update_peers() {
             match state {
                 PeerState::Connected => println!("Peer Joined"),
                 PeerState::Disconnected => println!("Peer Left"),
@@ -42,7 +55,7 @@ pub fn peer_state(socket: &mut WebRtcSocket) {
         }
 }
 
-pub fn send_packet(socket: &mut WebRtcSocket, packet: &DrawPacket) {
+pub fn send_packet(socket: &mut WebRtcSocket, packet: &NetworkPacket) {
     let bytes = bincode::serialize(packet).unwrap();
 
     for peer in socket.connected_peers().collect::<Vec<_>>() {
@@ -51,8 +64,8 @@ pub fn send_packet(socket: &mut WebRtcSocket, packet: &DrawPacket) {
 }
 pub fn handle_incoming(socket: &mut WebRtcSocket, strokes: &mut Vec<Stroke>, peer_current_stroke: &mut HashMap<PeerId, usize>) {
     for (peer, packet_bytes) in socket.channel_mut(0).receive() {
-        match bincode::deserialize::<DrawPacket>(&packet_bytes) {
-            Ok(packet) => {
+        match bincode::deserialize::<NetworkPacket>(&packet_bytes) {
+            Ok(NetworkPacket::Draw(packet)) => {
                 if packet.is_new_stroke {
                     strokes.push(Stroke {
                         size: packet.size.unwrap(),
@@ -65,7 +78,11 @@ pub fn handle_incoming(socket: &mut WebRtcSocket, strokes: &mut Vec<Stroke>, pee
                     strokes[idx].coordinates.push(packet.point);
                 }
             }
-            Err(e) => eprintln!("Bad packet")
+            Ok(NetworkPacket::Erase(packet)) => {
+                erase_at(strokes, packet.point, packet.size);
+                peer_current_stroke.clear();
+            }
+            Err(_e) => eprintln!("Bad packet")
         }
     }
 }
