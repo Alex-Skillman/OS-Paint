@@ -2,11 +2,11 @@ use macroquad::input::MouseButton;
 use macroquad::input::{is_mouse_button_pressed, is_mouse_button_down, mouse_position};
 use macroquad::color::YELLOW;
 use crate::network::send_packet;
-use crate::stroke::Stroke;
+use crate::stroke::{Stroke, Tool};
 use crate::network::DrawPacket;
 use matchbox_socket::WebRtcSocket;
 
-pub fn stroke_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16) {
+pub fn stroke_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, curent_tool: Tool) {
     let (mouse_x, mouse_y) = mouse_position();
     
     if is_mouse_button_pressed(MouseButton::Left) {
@@ -42,5 +42,3 @@ pub fn stroke_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radi
                 send_packet(socket, &packet);
             }
     }
-
-pub fn 

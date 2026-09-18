@@ -4,7 +4,8 @@ mod input;
 mod render;
 
 use macroquad::prelude::*;
-use stroke::Stroke;
+use stroke::{Stroke, Tool};
+use std::thread::current;
 use std::time::Duration;
 use crate::{input::stroke_drawing, network::peer_state};
 use crate::render::render_stroke;
@@ -49,8 +50,11 @@ async fn main() {
     // Initalize a variable for the current tool
     let mut current_tool: Tool = Tool::Pen;
 
+    // Find the last tool used
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
 
+    // Find the last key pressed
+    let mut last_key_press: char = '\0'; 
     loop {
         // Prints if a peer connects or disonnects
         peer_state(&mut socket);
@@ -58,17 +62,21 @@ async fn main() {
         // // Read incoming messages from peers
         handle_incoming(&mut socket, &mut strokes, &mut peer_current_stroke);
 
-        // Send a message to all peers
-        let peers: Vec<_> = socket.connected_peers().collect();
-        for peer in peers {
-            socket.channel_mut(0).send(b"Hello".to_vec().into_boxed_slice(), peer);
-        }
-
         // Draw the current fps on the screen
         draw_fps();
 
+        // Find the last keypress
+        let last_key_press = get_char_pressed();
+
+        // Match last keypress to a tool
+        match last_key_press {
+            Some('p') => current_tool = Tool::Pen,
+            Some('e') => current_tool = Tool::Eraser,
+            _ => current_tool = Tool::Pen,
+        }
+
         // Gets the user input to draw
-        stroke_drawing(&mut strokes, &mut socket, radius);
+        stroke_drawing(&mut strokes, &mut socket, radius, current_tool);
 
         // Draws the strokes onto the screen
         render_stroke(&mut strokes);
