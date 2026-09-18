@@ -55,6 +55,10 @@ async fn main() {
 
     // Find the last key pressed
     let mut last_key_press: char = '\0'; 
+
+    // TEMP: Eraser hardcoded size
+    let eraser_size: u16 = 25;
+    
     loop {
         // Prints if a peer connects or disonnects
         peer_state(&mut socket);

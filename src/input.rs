@@ -9,6 +9,7 @@ use matchbox_socket::WebRtcSocket;
 pub fn handle_tool(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, current_tool: Tool) {
     match current_tool {
         Tool::Pen => pen_drawing(strokes, socket, radius, current_tool),
+        Tool::Eraser => erasing(strokes),
         _ => panic!("Invalid tool. How did you manage that???"),
     }
 }
@@ -49,3 +50,44 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
                 send_packet(socket, &packet);
             }
     }
+
+fn erasing (strokes: &mut Vec<Stroke>) {
+    let mut new_strokes: Vec<Stroke> = Vec::new();
+
+    for stroke in strokes.iter_mut() {
+        let mut loop_accum: usize = 0;
+        while loop_accum < stroke.coordinates.len() {
+            if loop_accum == 0 {
+                loop_accum += 1;
+                continue;
+            }
+
+            let (last_x, last_y): (u16, u16) = stroke.coordinates[loop_accum - 1];
+            let (x, y): (u16, u16) = stroke.coordinates[loop_accum];
+
+            let dx = last_x as f32 - x as f32;
+            let dy = last_y as f32 - y as f32;
+            let dist = ((dx * dx) + (dy * dy)).sqrt();
+
+            let threshold = (stroke.size + 25) as f32;
+
+            if dist < threshold {
+                // Split: everything from loop_accum onward becomes a new stroke
+                let remaining = stroke.coordinates.split_off(loop_accum);
+                if remaining.len() > 1 {
+                    new_strokes.push(Stroke {
+                        size: stroke.size,
+                        color: stroke.color,
+                        layer: stroke.layer,
+                        coordinates: remaining[1..].to_vec(), // skip the erased point itself
+                    });
+                }
+                break; // stop processing this stroke, it's been split
+            } else {
+                loop_accum += 1;
+            }
+        }
+    }
+
+    strokes.append(&mut new_strokes);
+}
