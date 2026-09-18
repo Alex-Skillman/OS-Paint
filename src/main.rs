@@ -7,9 +7,9 @@ use macroquad::prelude::*;
 use stroke::{Stroke, Tool};
 use std::thread::current;
 use std::time::Duration;
-use crate::{input::stroke_drawing, network::peer_state};
+use crate::input::handle_tool;
 use crate::render::render_stroke;
-use crate::network::handle_incoming;
+use crate::network::{handle_incoming, peer_state};
 use std::collections::HashMap;
 use matchbox_socket::PeerId;
 use matchbox_socket::{WebRtcSocket, PeerState};
@@ -76,7 +76,7 @@ async fn main() {
         }
 
         // Gets the user input to draw
-        stroke_drawing(&mut strokes, &mut socket, radius, current_tool);
+        handle_tool(&mut strokes, &mut socket, radius, current_tool);
 
         // Draws the strokes onto the screen
         render_stroke(&mut strokes);

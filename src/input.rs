@@ -6,7 +6,14 @@ use crate::stroke::{Stroke, Tool};
 use crate::network::DrawPacket;
 use matchbox_socket::WebRtcSocket;
 
-pub fn stroke_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, curent_tool: Tool) {
+pub fn handle_tool(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, current_tool: Tool) {
+    match current_tool {
+        Tool::Pen => pen_drawing(strokes, socket, radius, current_tool),
+        _ => panic!("Invalid tool. How did you manage that???"),
+    }
+}
+
+fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16, curent_tool: Tool) {
     let (mouse_x, mouse_y) = mouse_position();
     
     if is_mouse_button_pressed(MouseButton::Left) {
