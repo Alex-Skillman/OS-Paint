@@ -10,6 +10,7 @@ use macroquad::prelude::*;
 use matchbox_socket::PeerId;
 use matchbox_socket::WebRtcSocket;
 use std::collections::HashMap;
+use std::env;
 use std::time::{Duration, Instant};
 use stroke::{Stroke, Tool};
 
@@ -37,8 +38,11 @@ async fn main() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
 
-    // THIS WILL ONLY WORK LOCALLY RIGHT NOW
-    let (mut socket, loop_fut) = WebRtcSocket::new_reliable("ws://localhost:3536/my_room");
+    let signaling_server =
+        env::var("OS_PAINT_SIGNALING_SERVER").unwrap_or("wss://matchbox-8uwy.onrender.com/".to_string());
+    println!("Connecting to signaling server: {signaling_server}");
+
+    let (mut socket, loop_fut) = WebRtcSocket::new_reliable(&signaling_server);
     // Background task that drives the message loop
     tokio::spawn(loop_fut);
 
