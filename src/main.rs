@@ -46,11 +46,11 @@ async fn main() {
     // Background task that drives the message loop
     tokio::spawn(loop_fut);
 
-    // This initalizes the vector of balls drawn
+    // This initalizes the vector of strokes drawn
     let mut strokes: Vec<Stroke> = Vec::new();
 
-    // Hardcoded start radius for balls
-    let radius: u16 = 10;
+    // Hardcoded start radius for stroke
+    let radius: u16 = 5;
 
     // Initalize a variable for the current tool
     let mut current_tool: Tool = Tool::Pen;

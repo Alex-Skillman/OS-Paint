@@ -4,6 +4,7 @@ use macroquad::color::Color;
 pub enum Tool {
     Pen,
     Eraser,
+    StrokeEraser,
 }
 pub struct Stroke {
     pub size: u16,

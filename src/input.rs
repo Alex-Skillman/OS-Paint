@@ -1,7 +1,7 @@
 use crate::network::DrawPacket;
 use crate::network::{ErasePacket, NetworkPacket, send_packet};
 use crate::stroke::{Stroke, Tool};
-use macroquad::color::YELLOW;
+use macroquad::color::WHITE;
 use macroquad::input::MouseButton;
 use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position};
 use matchbox_socket::WebRtcSocket;
@@ -16,6 +16,7 @@ pub fn handle_tool(
     match current_tool {
         Tool::Pen => pen_drawing(strokes, socket, radius),
         Tool::Eraser => erasing(strokes, socket, eraser_size),
+        Tool::StrokeEraser => erasing(strokes, socket, eraser_size),
     }
 }
 
@@ -26,7 +27,7 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
         // If the button is pressed then push a new Stroke to the vector, string
         strokes.push(Stroke {
             size: radius,
-            color: YELLOW,
+            color: WHITE,
             layer: 1,
             coordinates: vec![(mouse_x as u16, mouse_y as u16)],
         });
@@ -34,7 +35,7 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
             point: (mouse_x as u16, mouse_y as u16),
             is_new_stroke: true,
             size: Some(radius),
-            color: Some(YELLOW.into()),
+            color: Some(WHITE.into()),
             layer: Some(1),
         };
         send_packet(socket, &NetworkPacket::Draw(packet));
