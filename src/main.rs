@@ -3,7 +3,7 @@ mod network;
 mod render;
 mod stroke;
 
-use crate::input::handle_tool;
+use crate::input::{change_tool_size, handle_tool};
 use crate::network::{handle_incoming, peer_state, send_canvas_snapshot};
 use crate::render::render_stroke;
 use macroquad::prelude::*;
@@ -49,8 +49,8 @@ async fn main() {
     // This initalizes the vector of strokes drawn
     let mut strokes: Vec<Stroke> = Vec::new();
 
-    // Hardcoded start radius for stroke
-    let radius: u16 = 5;
+    // Start radius for stroke
+    let mut radius: u16 = 5;
 
     // Initalize a variable for the current tool
     let mut current_tool: Tool = Tool::Pen;
@@ -58,8 +58,8 @@ async fn main() {
     // Find the last tool used
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
 
-    // TEMP: Eraser hardcoded size
-    let eraser_size: u16 = 25;
+    // Inital eraser size
+    let mut eraser_size: u16 = 25;
 
     let snapshot_interval = Duration::from_secs(30);
     let mut last_snapshot_sent = Instant::now();
@@ -91,7 +91,7 @@ async fn main() {
         // Match last keypress to a tool
         if let Some(key) = last_key_press {
             match key {
-                'p' => current_tool = Tool::Pen,
+                'd' => current_tool = Tool::Pen,
                 'e' => current_tool = Tool::Eraser,
                 _ => {}
             }
@@ -102,7 +102,10 @@ async fn main() {
             canvas_revision += 1;
         }
 
-        // Draws the strokes onto the screen
+        // Gets user tool size change
+        change_tool_size(current_tool, &mut radius, &mut eraser_size);
+
+        // Draws the strokes onto the frame
         render_stroke(&mut strokes);
 
         next_frame().await;

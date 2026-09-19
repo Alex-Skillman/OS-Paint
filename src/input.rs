@@ -1,9 +1,10 @@
 use crate::network::DrawPacket;
 use crate::network::{ErasePacket, NetworkPacket, send_packet};
-use crate::stroke::{Stroke, Tool};
+use crate::stroke::{self, Stroke, Tool};
 use macroquad::color::WHITE;
 use macroquad::input::MouseButton;
-use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position};
+use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position, mouse_wheel, is_key_down};
+use macroquad::input::{KeyCode::Up, KeyCode::Down};
 use matchbox_socket::WebRtcSocket;
 
 pub fn handle_tool(
@@ -16,7 +17,7 @@ pub fn handle_tool(
     match current_tool {
         Tool::Pen => pen_drawing(strokes, socket, radius),
         Tool::Eraser => erasing(strokes, socket, eraser_size),
-        Tool::StrokeEraser => erasing(strokes, socket, eraser_size),
+        Tool::StrokeEraser => stroke_erase(strokes, socket, eraser_size),
     }
 }
 
@@ -120,3 +121,30 @@ pub fn erase_at(strokes: &mut Vec<Stroke>, point: (u16, u16), eraser_size: u16) 
     strokes.retain(|s| s.coordinates.len() > 1);
     erased
 }
+
+
+pub fn change_tool_size(tool: Tool, pen_size: &mut u16, eraser_size: &mut u16) {
+    if tool == Tool::Pen {
+        if is_key_down(Up) {
+            *pen_size += 1;
+        }
+        if is_key_down(Down) {
+            if *pen_size > 1 {
+            *pen_size -= 1;
+            }
+        }
+    }
+    if tool == Tool::Eraser {
+        if is_key_down(Up) {
+            *eraser_size += 1;
+        }
+        if is_key_down(Down) {
+            if *eraser_size > 1 {
+            *eraser_size -= 1;
+            }
+        }
+    }
+}
+
+// Not made yet
+fn stroke_erase(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) -> bool {false}
