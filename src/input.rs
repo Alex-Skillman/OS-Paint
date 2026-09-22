@@ -5,7 +5,15 @@ use macroquad::color::WHITE;
 use macroquad::input::MouseButton;
 use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position, mouse_wheel, is_key_down};
 use macroquad::input::{KeyCode::Up, KeyCode::Down};
+use matchbox_socket::PeerId;
 use matchbox_socket::WebRtcSocket;
+use std::collections::HashMap;
+
+// True if the given screen position is over the toolbar or size-slider
+// panel, so canvas drawing/erasing should be suppressed there.
+fn over_ui(x: f32, y: f32) -> bool {
+    y < crate::ui::TOOLBAR_HEIGHT || x < crate::ui::SLIDER_PANEL_WIDTH
+}
 
 pub fn handle_tool(
     strokes: &mut Vec<Stroke>,
@@ -13,16 +21,30 @@ pub fn handle_tool(
     radius: u16,
     eraser_size: u16,
     current_tool: Tool,
+    local_stroke_idx: &mut Option<usize>,
+    peer_current_stroke: &mut HashMap<PeerId, usize>,
 ) -> bool {
     match current_tool {
-        Tool::Pen => pen_drawing(strokes, socket, radius),
-        Tool::Eraser => erasing(strokes, socket, eraser_size),
-        Tool::StrokeEraser => stroke_erase(strokes, socket, eraser_size),
+        Tool::Pen => pen_drawing(strokes, socket, radius, local_stroke_idx),
+        Tool::Eraser => erasing(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke),
+        Tool::StrokeEraser => {
+            stroke_erase(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke)
+        }
     }
 }
 
-fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16) -> bool {
+fn pen_drawing(
+    strokes: &mut Vec<Stroke>,
+    socket: &mut WebRtcSocket,
+    radius: u16,
+    local_stroke_idx: &mut Option<usize>,
+) -> bool {
     let (mouse_x, mouse_y) = mouse_position();
+
+    // Don't draw on the canvas while interacting with the toolbar/slider.
+    if over_ui(mouse_x, mouse_y) {
+        return false;
+    }
 
     if is_mouse_button_pressed(MouseButton::Left) {
         // If the button is pressed then push a new Stroke to the vector, string
@@ -32,6 +54,9 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
             layer: 1,
             coordinates: vec![(mouse_x as u16, mouse_y as u16)],
         });
+        // Track our own stroke by index rather than assuming it's `strokes.last()`,
+        // since an incoming peer stroke can be pushed onto the same vector in between frames.
+        *local_stroke_idx = Some(strokes.len() - 1);
         let packet = DrawPacket {
             point: (mouse_x as u16, mouse_y as u16),
             is_new_stroke: true,
@@ -42,11 +67,16 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
         send_packet(socket, &NetworkPacket::Draw(packet));
         return true;
     } else if is_mouse_button_down(MouseButton::Left) {
-        if let Some(current_stroke) = strokes.last_mut() {
-            // Push new coordinates when the mouse buttne is held down
-            current_stroke
-                .coordinates
-                .push((mouse_x as u16, mouse_y as u16))
+        if let Some(idx) = *local_stroke_idx {
+            if let Some(current_stroke) = strokes.get_mut(idx) {
+                // Push new coordinates when the mouse button is held down
+                current_stroke
+                    .coordinates
+                    .push((mouse_x as u16, mouse_y as u16))
+            } else {
+                // Our stroke's index was invalidated (e.g. an erase shifted the vector)
+                *local_stroke_idx = None;
+            }
         }
 
         let packet = DrawPacket {
@@ -60,18 +90,35 @@ fn pen_drawing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, radius: u16
         return true;
     }
 
+    *local_stroke_idx = None;
     false
 }
 
-fn erasing(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) -> bool {
+fn erasing(
+    strokes: &mut Vec<Stroke>,
+    socket: &mut WebRtcSocket,
+    eraser_size: u16,
+    local_stroke_idx: &mut Option<usize>,
+    peer_current_stroke: &mut HashMap<PeerId, usize>,
+) -> bool {
     if !is_mouse_button_down(MouseButton::Left) {
         return false;
     }
 
     let (eraser_x, eraser_y) = mouse_position();
+
+    // Don't erase on the canvas while interacting with the toolbar/slider.
+    if over_ui(eraser_x, eraser_y) {
+        return false;
+    }
+
     let point = (eraser_x as u16, eraser_y as u16);
 
     if erase_at(strokes, point, eraser_size) {
+        // Erasing can remove/split strokes and shift every index after them, so any
+        // in-progress stroke we or a peer were tracking by index is no longer valid.
+        *local_stroke_idx = None;
+        peer_current_stroke.clear();
         let packet = ErasePacket {
             point,
             size: eraser_size,
@@ -146,15 +193,31 @@ pub fn change_tool_size(tool: Tool, pen_size: &mut u16, eraser_size: &mut u16) {
     }
 }
 
-fn stroke_erase(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) -> bool {
+fn stroke_erase(
+    strokes: &mut Vec<Stroke>,
+    socket: &mut WebRtcSocket,
+    eraser_size: u16,
+    local_stroke_idx: &mut Option<usize>,
+    peer_current_stroke: &mut HashMap<PeerId, usize>,
+) -> bool {
     if !is_mouse_button_down(MouseButton::Left) {
         return false;
     }
 
     let (eraser_x, eraser_y) = mouse_position();
+
+    // Don't erase on the canvas while interacting with the toolbar/slider.
+    if over_ui(eraser_x, eraser_y) {
+        return false;
+    }
+
     let point = (eraser_x as u16, eraser_y as u16);
 
     if stroke_erase_at(strokes, point, eraser_size) {
+        // Removing whole strokes shifts every index after them, invalidating any
+        // in-progress stroke we or a peer were tracking by index.
+        *local_stroke_idx = None;
+        peer_current_stroke.clear();
         let packet = StrokeErasePacket {
             point,
             size: eraser_size,

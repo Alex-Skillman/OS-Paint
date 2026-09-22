@@ -143,6 +143,7 @@ pub fn handle_incoming(
     strokes: &mut Vec<Stroke>,
     peer_current_stroke: &mut HashMap<PeerId, usize>,
     canvas_revision: &mut u64,
+    local_stroke_idx: &mut Option<usize>,
 ) {
     for (peer, packet_bytes) in socket.channel_mut(0).receive() {
         match bincode::deserialize::<NetworkPacket>(&packet_bytes) {
@@ -164,12 +165,14 @@ pub fn handle_incoming(
                 if erase_at(strokes, packet.point, packet.size) {
                     *canvas_revision += 1;
                     peer_current_stroke.clear();
+                    *local_stroke_idx = None;
                 }
             }
             Ok(NetworkPacket::StrokeErase(packet)) => {
                 if stroke_erase_at(strokes, packet.point, packet.size) {
                     *canvas_revision += 1;
                     peer_current_stroke.clear();
+                    *local_stroke_idx = None;
                 }
             }
             Ok(NetworkPacket::CanvasSnapshot(packet)) => {
@@ -177,6 +180,7 @@ pub fn handle_incoming(
                     *strokes = packet.strokes.into_iter().map(Stroke::from).collect();
                     *canvas_revision = packet.revision;
                     peer_current_stroke.clear();
+                    *local_stroke_idx = None;
                 }
             }
             Err(_e) => eprintln!("Bad packet"),

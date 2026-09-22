@@ -2,10 +2,12 @@ mod input;
 mod network;
 mod render;
 mod stroke;
+mod ui;
 
 use crate::input::{change_tool_size, handle_tool};
 use crate::network::{handle_incoming, peer_state, send_canvas_snapshot};
 use crate::render::render_stroke;
+use crate::ui::{draw_size_slider, draw_toolbar};
 use macroquad::prelude::*;
 use matchbox_socket::PeerId;
 use matchbox_socket::WebRtcSocket;
@@ -58,8 +60,15 @@ async fn main() {
     // Find the last tool used
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
 
+    // Tracks the index of the local player's in-progress stroke in `strokes`,
+    // since incoming peer strokes can be appended to the same vector mid-frame.
+    let mut local_stroke_idx: Option<usize> = None;
+
     // Inital eraser size
     let mut eraser_size: u16 = 25;
+
+    // Whether the size slider handle is currently being dragged
+    let mut slider_dragging: bool = false;
 
     let snapshot_interval = Duration::from_secs(30);
     let mut last_snapshot_sent = Instant::now();
@@ -75,6 +84,7 @@ async fn main() {
             &mut strokes,
             &mut peer_current_stroke,
             &mut canvas_revision,
+            &mut local_stroke_idx,
         );
 
         if last_snapshot_sent.elapsed() >= snapshot_interval {
@@ -99,7 +109,15 @@ async fn main() {
         }
 
         // Gets the user input to draw
-        if handle_tool(&mut strokes, &mut socket, radius, eraser_size, current_tool) {
+        if handle_tool(
+            &mut strokes,
+            &mut socket,
+            radius,
+            eraser_size,
+            current_tool,
+            &mut local_stroke_idx,
+            &mut peer_current_stroke,
+        ) {
             canvas_revision += 1;
         }
 
@@ -108,6 +126,12 @@ async fn main() {
 
         // Draws the strokes onto the frame
         render_stroke(&mut strokes);
+
+        // Draws the tool selection bar on top of the canvas
+        draw_toolbar(&mut current_tool);
+
+        // Draws the brush/eraser size slider on the right edge of the screen
+        draw_size_slider(current_tool, &mut radius, &mut eraser_size, &mut slider_dragging);
 
         next_frame().await;
         std::thread::sleep(Duration::from_millis(16));
