@@ -2,7 +2,7 @@ use crate::canvas;
 use crate::network::DrawPacket;
 use crate::network::{ErasePacket, NetworkPacket, StrokeErasePacket, send_packet};
 use crate::stroke::{self, Stroke, Tool};
-use macroquad::color::WHITE;
+use macroquad::color::Color;
 use macroquad::input::MouseButton;
 use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position, mouse_wheel, is_key_down};
 use macroquad::input::{KeyCode::Up, KeyCode::Down};
@@ -55,7 +55,7 @@ pub fn handle_pan(pan_x: &mut f32, pan_y: &mut f32, zoom: &mut f32, drag_origin:
 
 // True if the given screen position is over the toolbar or size-slider
 // panel, so canvas drawing/erasing should be suppressed there.
-fn over_ui(x: f32, y: f32) -> bool {
+pub fn over_ui(x: f32, y: f32) -> bool {
     y < crate::ui::TOOLBAR_HEIGHT || x < crate::ui::SLIDER_PANEL_WIDTH
 }
 
@@ -65,6 +65,7 @@ pub fn handle_tool(
     radius: u16,
     eraser_size: u16,
     current_tool: Tool,
+    current_color: Color,
     local_stroke_idx: &mut Option<usize>,
     peer_current_stroke: &mut HashMap<PeerId, usize>,
     pan_x: f32,
@@ -72,7 +73,7 @@ pub fn handle_tool(
     zoom: f32,
 ) -> bool {
     match current_tool {
-        Tool::Pen => pen_drawing(strokes, socket, radius, local_stroke_idx, pan_x, pan_y, zoom),
+        Tool::Pen => pen_drawing(strokes, socket, radius, current_color, local_stroke_idx, pan_x, pan_y, zoom),
         Tool::Eraser => erasing(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke, pan_x, pan_y, zoom),
         Tool::StrokeEraser => {
             stroke_erase(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke, pan_x, pan_y, zoom)
@@ -84,6 +85,7 @@ fn pen_drawing(
     strokes: &mut Vec<Stroke>,
     socket: Option<&mut WebRtcSocket>,
     radius: u16,
+    current_color: Color,
     local_stroke_idx: &mut Option<usize>,
     pan_x: f32,
     pan_y: f32,
@@ -102,7 +104,7 @@ fn pen_drawing(
         // If the button is pressed then push a new Stroke to the vector, string
         strokes.push(Stroke {
             size: radius,
-            color: WHITE,
+            color: current_color,
             layer: 1,
             coordinates: vec![(mouse_x as u16, mouse_y as u16)],
         });
@@ -114,7 +116,7 @@ fn pen_drawing(
                 point: (mouse_x as u16, mouse_y as u16),
                 is_new_stroke: true,
                 size: Some(radius),
-                color: Some(WHITE.into()),
+                color: Some(current_color.into()),
                 layer: Some(1),
             };
             send_packet(socket, &NetworkPacket::Draw(packet));

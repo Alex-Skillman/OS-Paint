@@ -20,6 +20,22 @@ const SHADOW: Color = Color::new(0.0, 0.0, 0.0, 0.25);
 
 const TOOLS: [Tool; 3] = [Tool::Pen, Tool::Eraser, Tool::StrokeEraser];
 
+// The palette always starts with these; colors picked from the wheel are
+// appended after them (see `remember_color` in main.rs).
+pub const DEFAULT_PALETTE: [Color; 4] = [BLACK, WHITE, RED, BLUE];
+
+const PALETTE_SWATCH_RADIUS: f32 = 9.0;
+const PALETTE_GAP: f32 = 8.0;
+const PALETTE_RING: Color = Color::new(1.0, 1.0, 1.0, 0.8);
+
+const WHEEL_RADIUS: f32 = 70.0;
+const WHEEL_SEGMENTS: usize = 48;
+const WHEEL_MARGIN: f32 = 26.0;
+// Gap between the toolbar's bottom edge and the wheel's panel, so the panel
+// (which shares the toolbar's background color) reads as a separate floating
+// box instead of fusing seamlessly into the toolbar with no visible seam.
+const WHEEL_PANEL_TOP_GAP: f32 = 10.0;
+
 // Width in pixels of the size-slider panel docked to the left edge.
 pub const SLIDER_PANEL_WIDTH: f32 = 44.0;
 
@@ -33,11 +49,16 @@ const PEN_MAX_SIZE: u16 = 60;
 const ERASER_MAX_SIZE: u16 = 120;
 const TRACK_IDLE: Color = Color::new(1.0, 1.0, 1.0, 0.12);
 
+// Which toolbar buttons were clicked this frame.
+pub struct ToolbarClick {
+    pub menu: bool,
+    pub color_swatch: bool,
+}
+
 // Draws the toolbar and handles clicks on it, updating `current_tool` when a
-// button is pressed. Returns true the frame the menu button (leftmost) is
-// clicked, so the caller can open the pause menu without needing Escape.
-// Call once per frame.
-pub fn draw_toolbar(current_tool: &mut Tool) -> bool {
+// tool button is pressed and `current_color` when a palette swatch is
+// clicked. Call once per frame.
+pub fn draw_toolbar(current_tool: &mut Tool, current_color: &mut Color, palette: &[Color]) -> ToolbarClick {
     let screen_w = screen_width();
 
     draw_rounded_rect_bottom(0.0, 0.0, screen_w, TOOLBAR_HEIGHT, BAR_RADIUS, BG);
@@ -100,7 +121,47 @@ pub fn draw_toolbar(current_tool: &mut Tool) -> bool {
         x += BUTTON_WIDTH + BUTTON_GAP;
     }
 
-    menu_clicked
+    // Row of quick-pick swatches (defaults + colors picked from the wheel),
+    // centered in the middle of the bar.
+    let palette_width = palette.len() as f32 * (PALETTE_SWATCH_RADIUS * 2.0)
+        + (palette.len().saturating_sub(1)) as f32 * PALETTE_GAP;
+    let mut px = screen_w / 2.0 - palette_width / 2.0 + PALETTE_SWATCH_RADIUS;
+    let py = TOOLBAR_HEIGHT / 2.0;
+
+    for &swatch_color in palette.iter() {
+        let hovered = (Vec2::new(mouse_x, mouse_y) - Vec2::new(px, py)).length() <= PALETTE_SWATCH_RADIUS + 3.0;
+        let is_selected = swatch_color == *current_color;
+
+        if is_selected || hovered {
+            draw_circle(px, py, PALETTE_SWATCH_RADIUS + 3.0, PALETTE_RING);
+        }
+        draw_circle(px, py, PALETTE_SWATCH_RADIUS, swatch_color);
+
+        if hovered && clicked {
+            *current_color = swatch_color;
+        }
+
+        px += PALETTE_SWATCH_RADIUS * 2.0 + PALETTE_GAP;
+    }
+
+    // Docked to the top-right corner, separate from the left-aligned tool group.
+    let swatch_rect = Rect::new(screen_w - SIDE_PADDING - BUTTON_WIDTH, button_y, BUTTON_WIDTH, button_height);
+    let swatch_hovered = swatch_rect.contains(Vec2::new(mouse_x, mouse_y));
+    if swatch_hovered {
+        draw_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.w, swatch_rect.h, BUTTON_RADIUS, HOVER_BG);
+    }
+    draw_circle(
+        swatch_rect.x + swatch_rect.w / 2.0,
+        swatch_rect.y + swatch_rect.h / 2.0,
+        button_height * 0.3,
+        *current_color,
+    );
+    let color_swatch_clicked = swatch_hovered && clicked;
+
+    ToolbarClick {
+        menu: menu_clicked,
+        color_swatch: color_swatch_clicked,
+    }
 }
 
 // Draws the vertical brush/eraser size slider docked to the left edge of
@@ -176,6 +237,89 @@ pub fn draw_size_slider(current_tool: Tool, pen_size: &mut u16, eraser_size: &mu
         14.0,
         IDLE_ICON,
     );
+}
+
+// The color wheel panel's bounds in screen space, dropped down from the
+// top-right color swatch button. Exposed so callers can tell whether a click
+// landed on the wheel itself (e.g. to decide whether to dismiss it).
+pub fn color_wheel_panel_rect() -> Rect {
+    let panel_w = WHEEL_RADIUS * 2.0 + WHEEL_MARGIN * 2.0;
+    let panel_h = WHEEL_RADIUS * 2.0 + WHEEL_MARGIN * 2.0;
+    let panel_x = screen_width() - SIDE_PADDING - panel_w;
+    let panel_y = TOOLBAR_HEIGHT + WHEEL_PANEL_TOP_GAP;
+    Rect::new(panel_x, panel_y, panel_w, panel_h)
+}
+
+// Draws a hue/saturation color wheel panel dropped down from the toolbar's
+// color swatch button, and handles picking a color from it. Value is fixed
+// at 1.0 (full brightness) so the wheel alone covers hue + saturation.
+// `open` is cleared when Escape is pressed while the wheel is showing.
+// `picking` persists across frames to track an in-progress drag; returns true
+// the frame a pick is finalized (mouse released after dragging inside the
+// wheel), so the caller can add the result to the color palette.
+pub fn draw_color_wheel(current_color: &mut Color, open: &mut bool, picking: &mut bool) -> bool {
+    if is_key_pressed(KeyCode::Escape) {
+        *open = false;
+        return false;
+    }
+
+    let panel = color_wheel_panel_rect();
+    let cx = panel.x + panel.w / 2.0;
+    let cy = panel.y + panel.h / 2.0;
+    draw_rounded_rect(panel.x, panel.y, panel.w, panel.h, BAR_RADIUS, BG);
+
+    // Triangle fan from a white center (saturation 0) to a ring of fully
+    // saturated hues; the GPU interpolates the vertex colors across each
+    // wedge, giving a smooth wheel from just ~50 flat-colored triangles.
+    let mut vertices = Vec::with_capacity(WHEEL_SEGMENTS + 2);
+    let mut indices = Vec::with_capacity(WHEEL_SEGMENTS * 3);
+    vertices.push(Vertex::new(cx, cy, 0.0, 0.0, 0.0, WHITE));
+    for i in 0..=WHEEL_SEGMENTS {
+        let t = i as f32 / WHEEL_SEGMENTS as f32;
+        let angle = t * std::f32::consts::TAU;
+        let x = cx + angle.cos() * WHEEL_RADIUS;
+        let y = cy + angle.sin() * WHEEL_RADIUS;
+        vertices.push(Vertex::new(x, y, 0.0, 0.0, 0.0, hsv_to_rgb(t * 360.0, 1.0, 1.0)));
+    }
+    for i in 0..WHEEL_SEGMENTS as u16 {
+        indices.extend_from_slice(&[0, i + 1, i + 2]);
+    }
+    draw_mesh(&Mesh { vertices, indices, texture: None });
+
+    let (mouse_x, mouse_y) = mouse_position();
+    let dx = mouse_x - cx;
+    let dy = mouse_y - cy;
+    let dist = (dx * dx + dy * dy).sqrt();
+
+    if dist <= WHEEL_RADIUS && is_mouse_button_down(MouseButton::Left) {
+        let hue = dy.atan2(dx).to_degrees().rem_euclid(360.0);
+        let saturation = (dist / WHEEL_RADIUS).min(1.0);
+        *current_color = hsv_to_rgb(hue, saturation, 1.0);
+        *picking = true;
+        false
+    } else if *picking {
+        *picking = false;
+        true
+    } else {
+        false
+    }
+}
+
+// Converts hue (degrees, 0-360), saturation and value (both 0-1) to an RGB color.
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color {
+    let c = v * s;
+    let h_prime = h / 60.0;
+    let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
+    let (r, g, b) = match h_prime as i32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = v - c;
+    Color::new(r + m, g + m, b + m, 1.0)
 }
 
 // A hamburger icon (three stacked bars) for the menu button.

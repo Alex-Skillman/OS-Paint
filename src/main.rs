@@ -6,11 +6,11 @@ mod render;
 mod stroke;
 mod ui;
 
-use crate::input::{change_tool_size, handle_pan, handle_tool};
+use crate::input::{change_tool_size, handle_pan, handle_tool, over_ui};
 use crate::menu::{update_menu, MenuAction, MenuState};
 use crate::network::{handle_incoming, peer_state, send_canvas_snapshot};
 use crate::render::{draw_canvas_border, render_stroke};
-use crate::ui::{draw_size_slider, draw_toolbar};
+use crate::ui::{color_wheel_panel_rect, draw_color_wheel, draw_size_slider, draw_toolbar, DEFAULT_PALETTE};
 use macroquad::prelude::*;
 use matchbox_socket::PeerId;
 use matchbox_socket::WebRtcSocket;
@@ -60,6 +60,22 @@ fn connect_to_room(signaling_base: &str, code: &str) -> NetworkSession {
     }
 }
 
+// Caps how many colors picked from the wheel accumulate in the palette,
+// beyond the permanent defaults.
+const MAX_CUSTOM_PALETTE_COLORS: usize = 3;
+
+// Adds a freshly picked color to the palette (skipping it if already present),
+// dropping the oldest non-default entry once the custom colors overflow.
+fn remember_color(palette: &mut Vec<Color>, color: Color) {
+    if palette.contains(&color) {
+        return;
+    }
+    palette.push(color);
+    if palette.len() > DEFAULT_PALETTE.len() + MAX_CUSTOM_PALETTE_COLORS {
+        palette.remove(DEFAULT_PALETTE.len());
+    }
+}
+
 #[macroquad::main("OS-Paint")]
 async fn main() {
     // Create a tokio runtime for the WebRTC signaling/message-loop background task
@@ -89,6 +105,13 @@ async fn main() {
 
     // Initalize a variable for the current tool
     let mut current_tool: Tool = Tool::Pen;
+
+    // Pen color, changed via the color wheel dropped down from the toolbar swatch,
+    // or picked directly from the palette (defaults + previously used colors).
+    let mut current_color: Color = WHITE;
+    let mut color_wheel_open = false;
+    let mut color_wheel_picking = false;
+    let mut palette: Vec<Color> = DEFAULT_PALETTE.to_vec();
 
     // Find the last tool used
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
@@ -139,13 +162,27 @@ async fn main() {
             }
         }
 
-        // Whether the menu was open at the start of this frame. Used instead of
-        // `menu_open` directly below so that pressing Escape to open the menu
-        // doesn't also feed that same key-press into the menu's own Escape
-        // check further down and immediately close it again in the same frame.
-        let menu_was_open = menu_open;
+        // If the color wheel is open and the player clicks to start drawing
+        // (anywhere that isn't the wheel itself or other UI), dismiss the
+        // wheel right away instead of silently eating the click, so drawing
+        // isn't blocked by having picked a color a moment ago.
+        if color_wheel_open && is_mouse_button_pressed(MouseButton::Left) {
+            let (click_x, click_y) = mouse_position();
+            let over_wheel = color_wheel_panel_rect().contains(Vec2::new(click_x, click_y));
+            if !over_wheel && !over_ui(click_x, click_y) {
+                color_wheel_open = false;
+            }
+        }
 
-        if !menu_was_open {
+        // Whether the menu/color wheel were open at the start of this frame
+        // (after the dismissal check above). Used instead of
+        // `menu_open`/`color_wheel_open` directly below so that pressing
+        // Escape to open the menu doesn't also feed that same key-press into
+        // a check further down and immediately undo itself in the same frame.
+        let menu_was_open = menu_open;
+        let wheel_was_open = color_wheel_open;
+
+        if !menu_was_open && !wheel_was_open {
             // Find the last keypress
             let last_key_press = get_char_pressed();
 
@@ -174,6 +211,7 @@ async fn main() {
                 radius,
                 eraser_size,
                 current_tool,
+                current_color,
                 &mut local_stroke_idx,
                 &mut peer_current_stroke,
                 pan_x,
@@ -194,14 +232,23 @@ async fn main() {
         render_stroke(&mut strokes, pan_x, pan_y, zoom);
 
         // Draws the tool selection bar on top of the canvas
-        let menu_button_clicked = draw_toolbar(&mut current_tool);
-        if menu_button_clicked && !menu_was_open {
+        let toolbar_click = draw_toolbar(&mut current_tool, &mut current_color, &palette);
+        if toolbar_click.menu && !menu_was_open && !wheel_was_open {
             menu_open = true;
             menu_state = MenuState::new();
+        }
+        if toolbar_click.color_swatch {
+            color_wheel_open = !color_wheel_open;
         }
 
         // Draws the brush/eraser size slider on the right edge of the screen
         draw_size_slider(current_tool, &mut radius, &mut eraser_size, &mut slider_dragging);
+
+        if wheel_was_open {
+            if draw_color_wheel(&mut current_color, &mut color_wheel_open, &mut color_wheel_picking) {
+                remember_color(&mut palette, current_color);
+            }
+        }
 
         if menu_was_open {
             let room_code = network.as_ref().map(|net| net.room_code.as_str());
