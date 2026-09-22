@@ -194,7 +194,11 @@ async fn main() {
         render_stroke(&mut strokes, pan_x, pan_y, zoom);
 
         // Draws the tool selection bar on top of the canvas
-        draw_toolbar(&mut current_tool);
+        let menu_button_clicked = draw_toolbar(&mut current_tool);
+        if menu_button_clicked && !menu_was_open {
+            menu_open = true;
+            menu_state = MenuState::new();
+        }
 
         // Draws the brush/eraser size slider on the right edge of the screen
         draw_size_slider(current_tool, &mut radius, &mut eraser_size, &mut slider_dragging);

@@ -12,7 +12,7 @@ const SIDE_PADDING: f32 = 8.0;
 
 const BG: Color = Color::new(0.10, 0.10, 0.11, 0.96);
 const IDLE_ICON: Color = Color::new(0.62, 0.62, 0.66, 1.0);
-const HOVER_BG: Color = Color::new(1.0, 1.0, 1.0, 0.08);
+const HOVER_BG: Color = Color::new(0.28, 0.28, 0.30, 1.0);
 const HOVER_ICON: Color = Color::new(0.88, 0.88, 0.90, 1.0);
 const SELECTED_BG: Color = Color::new(0.30, 0.55, 0.98, 1.0);
 const SELECTED_ICON: Color = WHITE;
@@ -34,8 +34,10 @@ const ERASER_MAX_SIZE: u16 = 120;
 const TRACK_IDLE: Color = Color::new(1.0, 1.0, 1.0, 0.12);
 
 // Draws the toolbar and handles clicks on it, updating `current_tool` when a
-// button is pressed. Call once per frame.
-pub fn draw_toolbar(current_tool: &mut Tool) {
+// button is pressed. Returns true the frame the menu button (leftmost) is
+// clicked, so the caller can open the pause menu without needing Escape.
+// Call once per frame.
+pub fn draw_toolbar(current_tool: &mut Tool) -> bool {
     let screen_w = screen_width();
 
     draw_rounded_rect_bottom(0.0, 0.0, screen_w, TOOLBAR_HEIGHT, BAR_RADIUS, BG);
@@ -47,6 +49,21 @@ pub fn draw_toolbar(current_tool: &mut Tool) {
     let button_height = TOOLBAR_HEIGHT - 12.0;
     let button_y = (TOOLBAR_HEIGHT - button_height) / 2.0;
     let mut x = SIDE_PADDING;
+
+    let menu_rect = Rect::new(x, button_y, BUTTON_WIDTH, button_height);
+    let menu_hovered = menu_rect.contains(Vec2::new(mouse_x, mouse_y));
+    if menu_hovered {
+        draw_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.w, menu_rect.h, BUTTON_RADIUS, HOVER_BG);
+    }
+    draw_menu_icon(
+        menu_rect.x + menu_rect.w / 2.0,
+        menu_rect.y + menu_rect.h / 2.0,
+        button_height * 0.62,
+        if menu_hovered { HOVER_ICON } else { IDLE_ICON },
+    );
+    let menu_clicked = menu_hovered && clicked;
+
+    x += BUTTON_WIDTH + BUTTON_GAP * 2.0;
 
     for &tool in TOOLS.iter() {
         let rect = Rect::new(x, button_y, BUTTON_WIDTH, button_height);
@@ -82,6 +99,8 @@ pub fn draw_toolbar(current_tool: &mut Tool) {
 
         x += BUTTON_WIDTH + BUTTON_GAP;
     }
+
+    menu_clicked
 }
 
 // Draws the vertical brush/eraser size slider docked to the left edge of
@@ -157,6 +176,17 @@ pub fn draw_size_slider(current_tool: Tool, pen_size: &mut u16, eraser_size: &mu
         14.0,
         IDLE_ICON,
     );
+}
+
+// A hamburger icon (three stacked bars) for the menu button.
+fn draw_menu_icon(cx: f32, cy: f32, size: f32, color: Color) {
+    let half = size / 2.0;
+    let thickness = size * 0.16;
+
+    for i in -1..=1 {
+        let y = cy + i as f32 * half * 0.7;
+        draw_line(cx - half, y, cx + half, y, thickness, color);
+    }
 }
 
 // A pen mid-stroke: two dots joined by a line, matching how the canvas
