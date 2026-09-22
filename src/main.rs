@@ -1,12 +1,13 @@
+mod canvas;
 mod input;
 mod network;
 mod render;
 mod stroke;
 mod ui;
 
-use crate::input::{change_tool_size, handle_tool};
+use crate::input::{change_tool_size, handle_pan, handle_tool};
 use crate::network::{handle_incoming, peer_state, send_canvas_snapshot};
-use crate::render::render_stroke;
+use crate::render::{draw_canvas_border, render_stroke};
 use crate::ui::{draw_size_slider, draw_toolbar};
 use macroquad::prelude::*;
 use matchbox_socket::PeerId;
@@ -74,6 +75,13 @@ async fn main() {
     let mut last_snapshot_sent = Instant::now();
     let mut canvas_revision: u64 = 0;
 
+    // View offset/zoom into the fixed-size canvas; the window is a scrollable,
+    // zoomable viewport onto it. Starts centered over the canvas at 100%.
+    let mut zoom: f32 = 1.0;
+    let mut pan_x: f32 = ((canvas::CANVAS_WIDTH - screen_width()) / 2.0).max(0.0);
+    let mut pan_y: f32 = ((canvas::CANVAS_HEIGHT - screen_height()) / 2.0).max(0.0);
+    let mut pan_drag_origin: Option<(f32, f32)> = None;
+
     loop {
         // Prints if a peer connects or disonnects
         peer_state(&mut socket, &strokes, canvas_revision);
@@ -108,6 +116,9 @@ async fn main() {
             }
         }
 
+        // Pans the view via right-click drag or mouse wheel, and zooms via Ctrl+wheel
+        handle_pan(&mut pan_x, &mut pan_y, &mut zoom, &mut pan_drag_origin);
+
         // Gets the user input to draw
         if handle_tool(
             &mut strokes,
@@ -117,6 +128,9 @@ async fn main() {
             current_tool,
             &mut local_stroke_idx,
             &mut peer_current_stroke,
+            pan_x,
+            pan_y,
+            zoom,
         ) {
             canvas_revision += 1;
         }
@@ -124,8 +138,11 @@ async fn main() {
         // Gets user tool size change
         change_tool_size(current_tool, &mut radius, &mut eraser_size);
 
+        // Draws the canvas edges so panning/zooming to the boundary is visible
+        draw_canvas_border(pan_x, pan_y, zoom);
+
         // Draws the strokes onto the frame
-        render_stroke(&mut strokes);
+        render_stroke(&mut strokes, pan_x, pan_y, zoom);
 
         // Draws the tool selection bar on top of the canvas
         draw_toolbar(&mut current_tool);

@@ -1,3 +1,4 @@
+use crate::canvas;
 use crate::network::DrawPacket;
 use crate::network::{ErasePacket, NetworkPacket, StrokeErasePacket, send_packet};
 use crate::stroke::{self, Stroke, Tool};
@@ -8,6 +9,49 @@ use macroquad::input::{KeyCode::Up, KeyCode::Down};
 use matchbox_socket::PeerId;
 use matchbox_socket::WebRtcSocket;
 use std::collections::HashMap;
+
+// Multiplier applied to zoom per mouse-wheel tick.
+const ZOOM_STEP: f32 = 1.1;
+
+// Pans the canvas view via right-click drag, and zooms via the mouse wheel,
+// centered on the cursor so the canvas point under it stays put. `drag_origin`
+// persists across frames to track an in-progress right-click drag.
+pub fn handle_pan(pan_x: &mut f32, pan_y: &mut f32, zoom: &mut f32, drag_origin: &mut Option<(f32, f32)>) {
+    let (mouse_x, mouse_y) = mouse_position();
+
+    if is_mouse_button_pressed(MouseButton::Right) {
+        *drag_origin = Some((mouse_x, mouse_y));
+    } else if is_mouse_button_down(MouseButton::Right) {
+        if let Some((last_x, last_y)) = *drag_origin {
+            *pan_x -= (mouse_x - last_x) / *zoom;
+            *pan_y -= (mouse_y - last_y) / *zoom;
+            *drag_origin = Some((mouse_x, mouse_y));
+        }
+    } else {
+        *drag_origin = None;
+    }
+
+    // On Windows, macroquad passes through the raw Win32 wheel delta, which is
+    // +/-120 (a multiple thereof for fast scrolling) per notch rather than a
+    // normalized +/-1, so it must be scaled back down before use.
+    let (_raw_wheel_x, raw_wheel_y) = mouse_wheel();
+    let wheel_y = raw_wheel_y / 120.0;
+
+    if wheel_y != 0.0 {
+        let old_zoom = *zoom;
+        let new_zoom = canvas::clamp_zoom(old_zoom * ZOOM_STEP.powf(wheel_y));
+        // Keep the canvas point currently under the cursor fixed on screen.
+        let canvas_x = mouse_x / old_zoom + *pan_x;
+        let canvas_y = mouse_y / old_zoom + *pan_y;
+        *pan_x = canvas_x - mouse_x / new_zoom;
+        *pan_y = canvas_y - mouse_y / new_zoom;
+        *zoom = new_zoom;
+    }
+
+    let (clamped_x, clamped_y) = canvas::clamp_pan(*pan_x, *pan_y, *zoom);
+    *pan_x = clamped_x;
+    *pan_y = clamped_y;
+}
 
 // True if the given screen position is over the toolbar or size-slider
 // panel, so canvas drawing/erasing should be suppressed there.
@@ -23,12 +67,15 @@ pub fn handle_tool(
     current_tool: Tool,
     local_stroke_idx: &mut Option<usize>,
     peer_current_stroke: &mut HashMap<PeerId, usize>,
+    pan_x: f32,
+    pan_y: f32,
+    zoom: f32,
 ) -> bool {
     match current_tool {
-        Tool::Pen => pen_drawing(strokes, socket, radius, local_stroke_idx),
-        Tool::Eraser => erasing(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke),
+        Tool::Pen => pen_drawing(strokes, socket, radius, local_stroke_idx, pan_x, pan_y, zoom),
+        Tool::Eraser => erasing(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke, pan_x, pan_y, zoom),
         Tool::StrokeEraser => {
-            stroke_erase(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke)
+            stroke_erase(strokes, socket, eraser_size, local_stroke_idx, peer_current_stroke, pan_x, pan_y, zoom)
         }
     }
 }
@@ -38,13 +85,18 @@ fn pen_drawing(
     socket: &mut WebRtcSocket,
     radius: u16,
     local_stroke_idx: &mut Option<usize>,
+    pan_x: f32,
+    pan_y: f32,
+    zoom: f32,
 ) -> bool {
-    let (mouse_x, mouse_y) = mouse_position();
+    let (screen_x, screen_y) = mouse_position();
 
     // Don't draw on the canvas while interacting with the toolbar/slider.
-    if over_ui(mouse_x, mouse_y) {
+    if over_ui(screen_x, screen_y) {
         return false;
     }
+
+    let (mouse_x, mouse_y) = canvas::screen_to_canvas(screen_x, screen_y, pan_x, pan_y, zoom);
 
     if is_mouse_button_pressed(MouseButton::Left) {
         // If the button is pressed then push a new Stroke to the vector, string
@@ -100,18 +152,22 @@ fn erasing(
     eraser_size: u16,
     local_stroke_idx: &mut Option<usize>,
     peer_current_stroke: &mut HashMap<PeerId, usize>,
+    pan_x: f32,
+    pan_y: f32,
+    zoom: f32,
 ) -> bool {
     if !is_mouse_button_down(MouseButton::Left) {
         return false;
     }
 
-    let (eraser_x, eraser_y) = mouse_position();
+    let (screen_x, screen_y) = mouse_position();
 
     // Don't erase on the canvas while interacting with the toolbar/slider.
-    if over_ui(eraser_x, eraser_y) {
+    if over_ui(screen_x, screen_y) {
         return false;
     }
 
+    let (eraser_x, eraser_y) = canvas::screen_to_canvas(screen_x, screen_y, pan_x, pan_y, zoom);
     let point = (eraser_x as u16, eraser_y as u16);
 
     if erase_at(strokes, point, eraser_size) {
@@ -199,18 +255,22 @@ fn stroke_erase(
     eraser_size: u16,
     local_stroke_idx: &mut Option<usize>,
     peer_current_stroke: &mut HashMap<PeerId, usize>,
+    pan_x: f32,
+    pan_y: f32,
+    zoom: f32,
 ) -> bool {
     if !is_mouse_button_down(MouseButton::Left) {
         return false;
     }
 
-    let (eraser_x, eraser_y) = mouse_position();
+    let (screen_x, screen_y) = mouse_position();
 
     // Don't erase on the canvas while interacting with the toolbar/slider.
-    if over_ui(eraser_x, eraser_y) {
+    if over_ui(screen_x, screen_y) {
         return false;
     }
 
+    let (eraser_x, eraser_y) = canvas::screen_to_canvas(screen_x, screen_y, pan_x, pan_y, zoom);
     let point = (eraser_x as u16, eraser_y as u16);
 
     if stroke_erase_at(strokes, point, eraser_size) {
