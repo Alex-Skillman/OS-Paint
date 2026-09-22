@@ -93,6 +93,7 @@ async fn main() {
             match key {
                 'd' => current_tool = Tool::Pen,
                 'e' => current_tool = Tool::Eraser,
+                'r' => current_tool = Tool::StrokeEraser,
                 _ => {}
             }
         }

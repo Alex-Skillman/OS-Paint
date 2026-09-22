@@ -1,5 +1,5 @@
 use crate::network::DrawPacket;
-use crate::network::{ErasePacket, NetworkPacket, send_packet};
+use crate::network::{ErasePacket, NetworkPacket, StrokeErasePacket, send_packet};
 use crate::stroke::{self, Stroke, Tool};
 use macroquad::color::WHITE;
 use macroquad::input::MouseButton;
@@ -134,7 +134,7 @@ pub fn change_tool_size(tool: Tool, pen_size: &mut u16, eraser_size: &mut u16) {
             }
         }
     }
-    if tool == Tool::Eraser {
+    if tool == Tool::Eraser || tool == Tool::StrokeEraser {
         if is_key_down(Up) {
             *eraser_size += 1;
         }
@@ -146,5 +146,41 @@ pub fn change_tool_size(tool: Tool, pen_size: &mut u16, eraser_size: &mut u16) {
     }
 }
 
-// Not made yet
-fn stroke_erase(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) -> bool {false}
+fn stroke_erase(strokes: &mut Vec<Stroke>, socket: &mut WebRtcSocket, eraser_size: u16) -> bool {
+    if !is_mouse_button_down(MouseButton::Left) {
+        return false;
+    }
+
+    let (eraser_x, eraser_y) = mouse_position();
+    let point = (eraser_x as u16, eraser_y as u16);
+
+    if stroke_erase_at(strokes, point, eraser_size) {
+        let packet = StrokeErasePacket {
+            point,
+            size: eraser_size,
+        };
+        send_packet(socket, &NetworkPacket::StrokeErase(packet));
+        return true;
+    }
+
+    false
+}
+
+// Removes entire strokes that pass within `eraser_size` of `point`, rather than
+// trimming just the coordinates that are in range like the point eraser does.
+pub fn stroke_erase_at(strokes: &mut Vec<Stroke>, point: (u16, u16), eraser_size: u16) -> bool {
+    let (eraser_x, eraser_y) = (point.0 as f32, point.1 as f32);
+    let before = strokes.len();
+
+    strokes.retain(|stroke| {
+        !stroke.coordinates.iter().any(|&(x, y)| {
+            let dx = eraser_x - x as f32;
+            let dy = eraser_y - y as f32;
+            let dist = ((dx * dx) + (dy * dy)).sqrt();
+            let threshold = (stroke.size + eraser_size) as f32;
+            dist < threshold
+        })
+    });
+
+    strokes.len() != before
+}

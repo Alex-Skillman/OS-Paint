@@ -1,4 +1,4 @@
-use crate::input::erase_at;
+use crate::input::{erase_at, stroke_erase_at};
 use crate::stroke::Stroke;
 use macroquad::color::Color;
 use matchbox_socket::PeerId;
@@ -30,6 +30,12 @@ pub struct ErasePacket {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct StrokeErasePacket {
+    pub point: (u16, u16),
+    pub size: u16,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct StrokePacket {
     pub size: u16,
     pub color: SerColor,
@@ -47,6 +53,7 @@ pub struct CanvasSnapshotPacket {
 pub enum NetworkPacket {
     Draw(DrawPacket),
     Erase(ErasePacket),
+    StrokeErase(StrokeErasePacket),
     CanvasSnapshot(CanvasSnapshotPacket),
 }
 
@@ -155,6 +162,12 @@ pub fn handle_incoming(
             }
             Ok(NetworkPacket::Erase(packet)) => {
                 if erase_at(strokes, packet.point, packet.size) {
+                    *canvas_revision += 1;
+                    peer_current_stroke.clear();
+                }
+            }
+            Ok(NetworkPacket::StrokeErase(packet)) => {
+                if stroke_erase_at(strokes, packet.point, packet.size) {
                     *canvas_revision += 1;
                     peer_current_stroke.clear();
                 }
