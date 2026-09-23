@@ -105,13 +105,14 @@ fn apply_undo(
     redo_stack: &mut Vec<Vec<Stroke>>,
     strokes: &mut Vec<Stroke>,
     canvas_revision: &mut u64,
+    background: Color,
     network: &mut Option<NetworkSession>,
 ) {
     if let Some(previous) = undo_stack.pop() {
         redo_stack.push(std::mem::replace(strokes, previous));
         *canvas_revision += 1;
         if let Some(net) = network.as_mut() {
-            send_canvas_snapshot(&mut net.socket, strokes, *canvas_revision);
+            send_canvas_snapshot(&mut net.socket, strokes, *canvas_revision, background);
         }
     }
 }
@@ -122,13 +123,14 @@ fn apply_redo(
     redo_stack: &mut Vec<Vec<Stroke>>,
     strokes: &mut Vec<Stroke>,
     canvas_revision: &mut u64,
+    background: Color,
     network: &mut Option<NetworkSession>,
 ) {
     if let Some(next) = redo_stack.pop() {
         undo_stack.push(std::mem::replace(strokes, next));
         *canvas_revision += 1;
         if let Some(net) = network.as_mut() {
-            send_canvas_snapshot(&mut net.socket, strokes, *canvas_revision);
+            send_canvas_snapshot(&mut net.socket, strokes, *canvas_revision, background);
         }
     }
 }
@@ -171,6 +173,9 @@ async fn main() {
     // or picked directly from the palette (defaults + previously used colors).
     let mut current_color: Color = WHITE;
     let mut color_wheel_open = false;
+    // Canvas background, toggled from the pause menu; synced to peers
+    // alongside the strokes in every canvas snapshot.
+    let mut canvas_background: Color = BLACK;
     let mut color_wheel_picking = false;
     let mut palette: Vec<Color> = DEFAULT_PALETTE.to_vec();
 
@@ -218,7 +223,7 @@ async fn main() {
             net.local_peer_id = net.socket.id();
 
             // Prints if a peer connects or disonnects
-            peer_state(&mut net.socket, &strokes, canvas_revision, &mut peer_cursors);
+            peer_state(&mut net.socket, &strokes, canvas_revision, canvas_background, &mut peer_cursors);
 
             // Read incoming messages from peers
             handle_incoming(
@@ -226,12 +231,13 @@ async fn main() {
                 &mut strokes,
                 &mut peer_current_stroke,
                 &mut canvas_revision,
+                &mut canvas_background,
                 &mut local_stroke_idx,
                 &mut peer_cursors,
             );
 
             if last_snapshot_sent.elapsed() >= snapshot_interval {
-                send_canvas_snapshot(&mut net.socket, &strokes, canvas_revision);
+                send_canvas_snapshot(&mut net.socket, &strokes, canvas_revision, canvas_background);
                 last_snapshot_sent = Instant::now();
             }
         }
@@ -277,12 +283,12 @@ async fn main() {
 
             let ctrl_held = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
             if ctrl_held && is_key_pressed(KeyCode::Z) {
-                apply_undo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+                apply_undo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, canvas_background, &mut network);
                 local_stroke_idx = None;
                 peer_current_stroke.clear();
             }
             if ctrl_held && is_key_pressed(KeyCode::Y) {
-                apply_redo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+                apply_redo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, canvas_background, &mut network);
                 local_stroke_idx = None;
                 peer_current_stroke.clear();
             }
@@ -336,8 +342,10 @@ async fn main() {
             change_tool_size(current_tool, &mut radius, &mut eraser_size);
         }
 
+        clear_background(canvas_background);
+
         // Draws the canvas edges so panning/zooming to the boundary is visible
-        draw_canvas_border(pan_x, pan_y, zoom);
+        draw_canvas_border(pan_x, pan_y, zoom, canvas_background);
 
         // Draws the strokes onto the frame
         render_stroke(&mut strokes, pan_x, pan_y, zoom);
@@ -361,12 +369,12 @@ async fn main() {
             color_wheel_open = !color_wheel_open;
         }
         if toolbar_click.undo {
-            apply_undo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+            apply_undo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, canvas_background, &mut network);
             local_stroke_idx = None;
             peer_current_stroke.clear();
         }
         if toolbar_click.redo {
-            apply_redo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+            apply_redo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, canvas_background, &mut network);
             local_stroke_idx = None;
             peer_current_stroke.clear();
         }
@@ -400,9 +408,23 @@ async fn main() {
                 }
                 None => Vec::new(),
             };
-            match update_menu(&mut menu_state, network.is_some(), room_code, &player_name, &lobby_members) {
+            match update_menu(
+                &mut menu_state,
+                network.is_some(),
+                room_code,
+                &player_name,
+                &lobby_members,
+                canvas_background,
+            ) {
                 MenuAction::None => {}
                 MenuAction::Close => menu_open = false,
+                MenuAction::ToggleBackground => {
+                    canvas_background = if canvas_background == WHITE { BLACK } else { WHITE };
+                    canvas_revision += 1;
+                    if let Some(net) = network.as_mut() {
+                        send_canvas_snapshot(&mut net.socket, &strokes, canvas_revision, canvas_background);
+                    }
+                }
                 MenuAction::Host => {
                     let code = generate_room_code();
                     network = Some(connect_to_room(&signaling_server, &code));
@@ -416,6 +438,7 @@ async fn main() {
                     // whatever was doodled locally before connecting.
                     strokes.clear();
                     canvas_revision = 0;
+                    canvas_background = BLACK;
                     peer_current_stroke.clear();
                     local_stroke_idx = None;
                     peer_cursors.clear();

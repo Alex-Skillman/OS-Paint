@@ -60,8 +60,16 @@ pub fn render_peer_cursors(peer_cursors: &HashMap<PeerId, PeerCursor>, pan_x: f3
 }
 
 // Draws the fixed canvas's edges (in screen space, given the current pan/zoom)
-// so panning or zooming to the edge of the drawing surface is visually obvious.
-pub fn draw_canvas_border(pan_x: f32, pan_y: f32, zoom: f32) {
+// so panning or zooming to the edge of the drawing surface is visually
+// obvious. The border is drawn in whichever of black/white contrasts with
+// `background`, so it stays visible whichever one is chosen.
+pub fn draw_canvas_border(pan_x: f32, pan_y: f32, zoom: f32, background: Color) {
     let (x, y) = canvas::canvas_to_screen(0.0, 0.0, pan_x, pan_y, zoom);
-    draw_rectangle_lines(x, y, CANVAS_WIDTH * zoom, CANVAS_HEIGHT * zoom, 2.0, Color::new(1.0, 1.0, 1.0, 0.25));
+    let luminance = 0.299 * background.r + 0.587 * background.g + 0.114 * background.b;
+    let line_color = if luminance > 0.5 {
+        Color::new(0.0, 0.0, 0.0, 0.25)
+    } else {
+        Color::new(1.0, 1.0, 1.0, 0.25)
+    };
+    draw_rectangle_lines(x, y, CANVAS_WIDTH * zoom, CANVAS_HEIGHT * zoom, 2.0, line_color);
 }

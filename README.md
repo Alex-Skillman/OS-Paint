@@ -45,7 +45,7 @@ OS_PAINT_SIGNALING_SERVER=wss://your-signaling-server.example {your binary}
 
 ## Prebuilt binaries
 
-Every push builds Windows and macOS binaries via GitHub Actions (see [.github/workflows/build.yml](.github/workflows/build.yml)); grab them from that workflow's run artifacts.
+Every push builds Windows, macOS, and Linux binaries via GitHub Actions (see [.github/workflows/build.yml](.github/workflows/build.yml)); grab them from that workflow's run artifacts, or from the [latest release](../../releases/tag/latest), which is republished automatically on every push to `master`.
 
 ## Project layout
 

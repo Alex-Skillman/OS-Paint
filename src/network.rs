@@ -49,6 +49,7 @@ pub struct StrokePacket {
 pub struct CanvasSnapshotPacket {
     pub revision: u64,
     pub strokes: Vec<StrokePacket>,
+    pub background: SerColor,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -138,13 +139,14 @@ pub fn peer_state(
     socket: &mut WebRtcSocket,
     strokes: &[Stroke],
     canvas_revision: u64,
+    background: Color,
     peer_cursors: &mut HashMap<PeerId, PeerCursor>,
 ) {
     for (peer, state) in socket.update_peers() {
         match state {
             PeerState::Connected => {
                 println!("Peer Joined");
-                send_canvas_snapshot_to_peer(socket, strokes, canvas_revision, peer);
+                send_canvas_snapshot_to_peer(socket, strokes, canvas_revision, background, peer);
             }
             PeerState::Disconnected => {
                 println!("Peer Left");
@@ -171,24 +173,26 @@ pub fn send_packet(socket: &mut WebRtcSocket, packet: &NetworkPacket) {
     }
 }
 
-fn canvas_snapshot_packet(strokes: &[Stroke], canvas_revision: u64) -> NetworkPacket {
+fn canvas_snapshot_packet(strokes: &[Stroke], canvas_revision: u64, background: Color) -> NetworkPacket {
     NetworkPacket::CanvasSnapshot(CanvasSnapshotPacket {
         revision: canvas_revision,
         strokes: strokes.iter().map(StrokePacket::from).collect(),
+        background: background.into(),
     })
 }
 
-pub fn send_canvas_snapshot(socket: &mut WebRtcSocket, strokes: &[Stroke], canvas_revision: u64) {
-    send_packet(socket, &canvas_snapshot_packet(strokes, canvas_revision));
+pub fn send_canvas_snapshot(socket: &mut WebRtcSocket, strokes: &[Stroke], canvas_revision: u64, background: Color) {
+    send_packet(socket, &canvas_snapshot_packet(strokes, canvas_revision, background));
 }
 
 fn send_canvas_snapshot_to_peer(
     socket: &mut WebRtcSocket,
     strokes: &[Stroke],
     canvas_revision: u64,
+    background: Color,
     peer: PeerId,
 ) {
-    let bytes = bincode::serialize(&canvas_snapshot_packet(strokes, canvas_revision)).unwrap();
+    let bytes = bincode::serialize(&canvas_snapshot_packet(strokes, canvas_revision, background)).unwrap();
     socket.channel_mut(0).send(bytes.into_boxed_slice(), peer);
 }
 
@@ -197,6 +201,7 @@ pub fn handle_incoming(
     strokes: &mut Vec<Stroke>,
     peer_current_stroke: &mut HashMap<PeerId, usize>,
     canvas_revision: &mut u64,
+    background: &mut Color,
     local_stroke_idx: &mut Option<usize>,
     peer_cursors: &mut HashMap<PeerId, PeerCursor>,
 ) {
@@ -234,6 +239,7 @@ pub fn handle_incoming(
                 if packet.revision > *canvas_revision {
                     *strokes = packet.strokes.into_iter().map(Stroke::from).collect();
                     *canvas_revision = packet.revision;
+                    *background = packet.background.into();
                     peer_current_stroke.clear();
                     *local_stroke_idx = None;
                 }

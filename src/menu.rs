@@ -26,6 +26,7 @@ pub enum MenuAction {
     Join(String),
     Leave,
     SetName(String),
+    ToggleBackground,
 }
 
 const PANEL_WIDTH: f32 = 320.0;
@@ -40,12 +41,14 @@ const IDLE_BG: Color = Color::new(1.0, 1.0, 1.0, 0.08);
 // shown to others. `lobby_members` (the local player's name/color plus each
 // connected peer's) is shown as a row of colored, named circles so everyone
 // can see who's in the room, and what they're about to draw with, at a glance.
+// `canvas_background` labels the light/dark canvas toggle with its current mode.
 pub fn update_menu(
     menu: &mut MenuState,
     in_lobby: bool,
     room_code: Option<&str>,
     player_name: &str,
     lobby_members: &[(String, Color)],
+    canvas_background: Color,
 ) -> MenuAction {
     draw_rectangle(0.0, 0.0, screen_width(), screen_height(), Color::new(0.0, 0.0, 0.0, 0.6));
 
@@ -57,7 +60,7 @@ pub fn update_menu(
                 return MenuAction::Close;
             }
 
-            let mut y = screen_height() / 2.0 - if in_lobby { 240.0 } else { 170.0 };
+            let mut y = screen_height() / 2.0 - if in_lobby { 267.0 } else { 197.0 };
             draw_text_centered("Menu", cx, y, 32.0, WHITE);
             y += 50.0;
 
@@ -69,6 +72,12 @@ pub fn update_menu(
             if button(cx - PANEL_WIDTH / 2.0, y, &format!("Name: {player_name}")) {
                 menu.screen = MenuScreen::NameInput(player_name.to_string());
                 return MenuAction::None;
+            }
+            y += BUTTON_HEIGHT + BUTTON_GAP;
+
+            let mode = if canvas_background == WHITE { "Light" } else { "Dark" };
+            if button(cx - PANEL_WIDTH / 2.0, y, &format!("Canvas: {mode}")) {
+                return MenuAction::ToggleBackground;
             }
             y += BUTTON_HEIGHT + BUTTON_GAP;
 
