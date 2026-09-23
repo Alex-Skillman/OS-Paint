@@ -5,6 +5,7 @@ use crate::stroke::{self, Stroke, Tool};
 use macroquad::color::Color;
 use macroquad::input::MouseButton;
 use macroquad::input::{is_mouse_button_down, is_mouse_button_pressed, mouse_position, mouse_wheel, is_key_down};
+use macroquad::input::{touches, TouchPhase};
 use macroquad::input::{KeyCode::Up, KeyCode::Down};
 use matchbox_socket::PeerId;
 use matchbox_socket::WebRtcSocket;
@@ -12,6 +13,60 @@ use std::collections::HashMap;
 
 // Multiplier applied to zoom per mouse-wheel tick.
 const ZOOM_STEP: f32 = 1.1;
+
+// Tracks an in-progress two-finger pan/zoom gesture across frames: the
+// touches' midpoint and the distance between them, as of the last frame.
+pub type TouchGesture = Option<((f32, f32), f32)>;
+
+// Touch equivalent of `handle_pan`'s right-click-drag pan and mouse-wheel
+// zoom: two fingers dragging together pans by their midpoint's movement, and
+// fingers moving apart/together zooms by the change in distance between
+// them, centered on the midpoint. Returns true while a two-finger gesture is
+// active, so the caller can skip drawing/erasing for the frame — otherwise
+// the first finger (which macroquad also reports as a simulated mouse-down)
+// can start a stroke a frame or two before the second finger is detected,
+// leaving a stray dot on the canvas.
+pub fn handle_touch_pan_zoom(pan_x: &mut f32, pan_y: &mut f32, zoom: &mut f32, gesture: &mut TouchGesture) -> bool {
+    let mut active: Vec<_> = touches()
+        .into_iter()
+        .filter(|t| !matches!(t.phase, TouchPhase::Ended | TouchPhase::Cancelled))
+        .collect();
+    // Sorted by id so the chosen pair stays consistent frame-to-frame
+    // regardless of `touches()`'s (unspecified) iteration order.
+    active.sort_by_key(|t| t.id);
+
+    if active.len() < 2 {
+        *gesture = None;
+        return false;
+    }
+
+    let (x1, y1) = (active[0].position.x, active[0].position.y);
+    let (x2, y2) = (active[1].position.x, active[1].position.y);
+    let midpoint = ((x1 + x2) / 2.0, (y1 + y2) / 2.0);
+    let distance = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt().max(1.0);
+
+    if let Some((last_mid, last_dist)) = *gesture {
+        *pan_x -= (midpoint.0 - last_mid.0) / *zoom;
+        *pan_y -= (midpoint.1 - last_mid.1) / *zoom;
+
+        // Keep the canvas point under the midpoint fixed on screen, same
+        // approach as the wheel-zoom in `handle_pan`.
+        let old_zoom = *zoom;
+        let new_zoom = canvas::clamp_zoom(old_zoom * (distance / last_dist));
+        let canvas_x = midpoint.0 / old_zoom + *pan_x;
+        let canvas_y = midpoint.1 / old_zoom + *pan_y;
+        *pan_x = canvas_x - midpoint.0 / new_zoom;
+        *pan_y = canvas_y - midpoint.1 / new_zoom;
+        *zoom = new_zoom;
+
+        let (clamped_x, clamped_y) = canvas::clamp_pan(*pan_x, *pan_y, *zoom);
+        *pan_x = clamped_x;
+        *pan_y = clamped_y;
+    }
+
+    *gesture = Some((midpoint, distance));
+    true
+}
 
 // Pans the canvas view via right-click drag, and zooms via the mouse wheel,
 // centered on the cursor so the canvas point under it stays put. `drag_origin`

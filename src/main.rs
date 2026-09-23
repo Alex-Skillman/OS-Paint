@@ -6,7 +6,7 @@ mod render;
 mod stroke;
 mod ui;
 
-use crate::input::{change_tool_size, handle_pan, handle_tool, over_ui};
+use crate::input::{change_tool_size, handle_pan, handle_tool, handle_touch_pan_zoom, over_ui, TouchGesture};
 use crate::menu::{update_menu, MenuAction, MenuState};
 use crate::network::{
     handle_incoming, peer_color, peer_label, peer_state, send_canvas_snapshot, send_cursor, PeerCursor,
@@ -206,6 +206,7 @@ async fn main() {
     let mut pan_x: f32 = ((canvas::CANVAS_WIDTH - screen_width()) / 2.0).max(0.0);
     let mut pan_y: f32 = ((canvas::CANVAS_HEIGHT - screen_height()) / 2.0).max(0.0);
     let mut pan_drag_origin: Option<(f32, f32)> = None;
+    let mut touch_gesture: TouchGesture = None;
 
     // Escape opens this pause menu; it offers Host/Join while in single-person
     // mode, or Leave Lobby while connected.
@@ -289,11 +290,15 @@ async fn main() {
             // Pans the view via right-click drag, and zooms via the mouse wheel
             handle_pan(&mut pan_x, &mut pan_y, &mut zoom, &mut pan_drag_origin);
 
+            // Touch equivalent: two fingers dragging pans, pinching zooms.
+            // While active, drawing/erasing is suppressed below.
+            let two_finger_active = handle_touch_pan_zoom(&mut pan_x, &mut pan_y, &mut zoom, &mut touch_gesture);
+
             // A left click on the canvas starts a new discrete drawing action
             // (a whole pen stroke, or an erase/stroke-erase drag) — snapshot
             // the canvas now so Undo can restore exactly this point.
             let (raw_mouse_x, raw_mouse_y) = mouse_position();
-            if is_mouse_button_pressed(MouseButton::Left) && !over_ui(raw_mouse_x, raw_mouse_y) {
+            if is_mouse_button_pressed(MouseButton::Left) && !over_ui(raw_mouse_x, raw_mouse_y) && !two_finger_active {
                 push_undo_snapshot(&mut undo_stack, &mut redo_stack, &strokes);
             }
 
@@ -307,20 +312,23 @@ async fn main() {
                 }
             }
 
-            // Gets the user input to draw
-            if handle_tool(
-                &mut strokes,
-                network.as_mut().map(|net| &mut net.socket),
-                radius,
-                eraser_size,
-                current_tool,
-                current_color,
-                &mut local_stroke_idx,
-                &mut peer_current_stroke,
-                pan_x,
-                pan_y,
-                zoom,
-            ) {
+            // Gets the user input to draw, skipping while a two-finger
+            // pan/zoom gesture is in progress.
+            if !two_finger_active
+                && handle_tool(
+                    &mut strokes,
+                    network.as_mut().map(|net| &mut net.socket),
+                    radius,
+                    eraser_size,
+                    current_tool,
+                    current_color,
+                    &mut local_stroke_idx,
+                    &mut peer_current_stroke,
+                    pan_x,
+                    pan_y,
+                    zoom,
+                )
+            {
                 canvas_revision += 1;
             }
 
