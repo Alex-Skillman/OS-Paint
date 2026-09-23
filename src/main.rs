@@ -8,8 +8,10 @@ mod ui;
 
 use crate::input::{change_tool_size, handle_pan, handle_tool, over_ui};
 use crate::menu::{update_menu, MenuAction, MenuState};
-use crate::network::{handle_incoming, peer_state, send_canvas_snapshot};
-use crate::render::{draw_canvas_border, render_stroke};
+use crate::network::{
+    handle_incoming, peer_color, peer_label, peer_state, send_canvas_snapshot, send_cursor, PeerCursor,
+};
+use crate::render::{draw_canvas_border, render_peer_cursors, render_stroke};
 use crate::ui::{color_wheel_panel_rect, draw_color_wheel, draw_size_slider, draw_toolbar, DEFAULT_PALETTE};
 use macroquad::prelude::*;
 use matchbox_socket::PeerId;
@@ -40,6 +42,9 @@ struct NetworkSession {
     socket: WebRtcSocket,
     task: tokio::task::JoinHandle<Result<(), matchbox_socket::Error>>,
     room_code: String,
+    // The local player's own id, once the signaling server assigns one; used
+    // to include "you" in the lobby's participant list.
+    local_peer_id: Option<PeerId>,
 }
 
 // A random 6-digit code, used as the room id appended to the signaling
@@ -57,6 +62,7 @@ fn connect_to_room(signaling_base: &str, code: &str) -> NetworkSession {
         socket,
         task,
         room_code: code.to_string(),
+        local_peer_id: None,
     }
 }
 
@@ -141,6 +147,10 @@ async fn main() {
         .as_nanos() as u64;
     macroquad::rand::srand(seed);
 
+    // Shown to others next to our cursor and in the lobby list; editable from
+    // the pause menu.
+    let mut player_name: String = format!("Player{:04}", macroquad::rand::gen_range(0u32, 10_000u32));
+
     let signaling_server =
         env::var("OS_PAINT_SIGNALING_SERVER").unwrap_or("wss://matchbox-8uwy.onrender.com".to_string());
 
@@ -172,6 +182,10 @@ async fn main() {
     // Find the last tool used
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
 
+    // Last-known canvas-space cursor position for each connected peer, so
+    // everyone's pointer can be drawn on the shared canvas.
+    let mut peer_cursors: HashMap<PeerId, PeerCursor> = HashMap::new();
+
     // Tracks the index of the local player's in-progress stroke in `strokes`,
     // since incoming peer strokes can be appended to the same vector mid-frame.
     let mut local_stroke_idx: Option<usize> = None;
@@ -200,8 +214,10 @@ async fn main() {
 
     loop {
         if let Some(net) = network.as_mut() {
+            net.local_peer_id = net.socket.id();
+
             // Prints if a peer connects or disonnects
-            peer_state(&mut net.socket, &strokes, canvas_revision);
+            peer_state(&mut net.socket, &strokes, canvas_revision, &mut peer_cursors);
 
             // Read incoming messages from peers
             handle_incoming(
@@ -210,6 +226,7 @@ async fn main() {
                 &mut peer_current_stroke,
                 &mut canvas_revision,
                 &mut local_stroke_idx,
+                &mut peer_cursors,
             );
 
             if last_snapshot_sent.elapsed() >= snapshot_interval {
@@ -280,6 +297,16 @@ async fn main() {
                 push_undo_snapshot(&mut undo_stack, &mut redo_stack, &strokes);
             }
 
+            // Broadcast our own cursor position to the lobby so peers can draw
+            // it on their canvas, skipping while we're over the toolbar/slider.
+            if let Some(net) = network.as_mut() {
+                if !over_ui(raw_mouse_x, raw_mouse_y) {
+                    let (canvas_x, canvas_y) =
+                        canvas::screen_to_canvas(raw_mouse_x, raw_mouse_y, pan_x, pan_y, zoom);
+                    send_cursor(&mut net.socket, (canvas_x as u16, canvas_y as u16), current_color, &player_name);
+                }
+            }
+
             // Gets the user input to draw
             if handle_tool(
                 &mut strokes,
@@ -306,6 +333,9 @@ async fn main() {
 
         // Draws the strokes onto the frame
         render_stroke(&mut strokes, pan_x, pan_y, zoom);
+
+        // Draws each connected peer's cursor on top of the canvas
+        render_peer_cursors(&peer_cursors, pan_x, pan_y, zoom);
 
         // Draws the tool selection bar on top of the canvas
         let toolbar_click = draw_toolbar(
@@ -344,7 +374,25 @@ async fn main() {
 
         if menu_was_open {
             let room_code = network.as_ref().map(|net| net.room_code.as_str());
-            match update_menu(&mut menu_state, network.is_some(), room_code) {
+            // Each connected peer's live name/color (from their last cursor
+            // update, falling back to a placeholder name and their stable hash
+            // color until they move their mouse onto the canvas at least
+            // once), plus our own name and current color.
+            let lobby_members: Vec<(String, Color)> = match network.as_ref() {
+                Some(net) => {
+                    let mut members: Vec<(String, Color)> = Vec::new();
+                    if net.local_peer_id.is_some() {
+                        members.push((player_name.clone(), current_color));
+                    }
+                    members.extend(net.socket.connected_peers().map(|id| match peer_cursors.get(&id) {
+                        Some(cursor) => (cursor.name.clone(), cursor.color),
+                        None => (peer_label(id), peer_color(id)),
+                    }));
+                    members
+                }
+                None => Vec::new(),
+            };
+            match update_menu(&mut menu_state, network.is_some(), room_code, &player_name, &lobby_members) {
                 MenuAction::None => {}
                 MenuAction::Close => menu_open = false,
                 MenuAction::Host => {
@@ -362,6 +410,7 @@ async fn main() {
                     canvas_revision = 0;
                     peer_current_stroke.clear();
                     local_stroke_idx = None;
+                    peer_cursors.clear();
                     network = Some(connect_to_room(&signaling_server, &code));
                     last_snapshot_sent = Instant::now();
                     undo_stack.clear();
@@ -374,8 +423,13 @@ async fn main() {
                     }
                     peer_current_stroke.clear();
                     local_stroke_idx = None;
+                    peer_cursors.clear();
                     undo_stack.clear();
                     redo_stack.clear();
+                    menu_state = MenuState::new();
+                }
+                MenuAction::SetName(name) => {
+                    player_name = name;
                     menu_state = MenuState::new();
                 }
             }

@@ -5,6 +5,8 @@ use matchbox_socket::PeerId;
 use matchbox_socket::{PeerState, WebRtcSocket};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct SerColor {
@@ -50,11 +52,48 @@ pub struct CanvasSnapshotPacket {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct CursorPacket {
+    pub point: (u16, u16),
+    pub color: SerColor,
+    pub name: String,
+}
+
+// A peer's last-known cursor position, the color they currently have
+// selected, and their display name, so their indicator on the canvas (and
+// their entry in the lobby list) shows who they are and what they're about
+// to draw with.
+#[derive(Clone)]
+pub struct PeerCursor {
+    pub point: (u16, u16),
+    pub color: Color,
+    pub name: String,
+}
+
+#[derive(Serialize, Deserialize)]
 pub enum NetworkPacket {
     Draw(DrawPacket),
     Erase(ErasePacket),
     StrokeErase(StrokeErasePacket),
     CanvasSnapshot(CanvasSnapshotPacket),
+    Cursor(CursorPacket),
+}
+
+// A stable color derived from a peer's id (rather than anything they choose),
+// so their cursor and their circle in the lobby list always match and stay
+// consistent across everyone's screens without any coordination.
+pub fn peer_color(peer: PeerId) -> Color {
+    let mut hasher = DefaultHasher::new();
+    peer.hash(&mut hasher);
+    let hue = ((hasher.finish() >> 40) % 360) as f32;
+    crate::ui::hsv_to_rgb(hue, 0.8, 0.95)
+}
+
+// A placeholder display name derived from a peer's id, shown until their
+// actual name arrives with their first cursor update.
+pub fn peer_label(peer: PeerId) -> String {
+    let mut hasher = DefaultHasher::new();
+    peer.hash(&mut hasher);
+    format!("Guest-{:04X}", (hasher.finish() & 0xFFFF) as u16)
 }
 
 impl From<Color> for SerColor {
@@ -95,16 +134,31 @@ impl From<StrokePacket> for Stroke {
     }
 }
 
-pub fn peer_state(socket: &mut WebRtcSocket, strokes: &[Stroke], canvas_revision: u64) {
+pub fn peer_state(
+    socket: &mut WebRtcSocket,
+    strokes: &[Stroke],
+    canvas_revision: u64,
+    peer_cursors: &mut HashMap<PeerId, PeerCursor>,
+) {
     for (peer, state) in socket.update_peers() {
         match state {
             PeerState::Connected => {
                 println!("Peer Joined");
                 send_canvas_snapshot_to_peer(socket, strokes, canvas_revision, peer);
             }
-            PeerState::Disconnected => println!("Peer Left"),
+            PeerState::Disconnected => {
+                println!("Peer Left");
+                peer_cursors.remove(&peer);
+            }
         }
     }
+}
+
+pub fn send_cursor(socket: &mut WebRtcSocket, point: (u16, u16), color: Color, name: &str) {
+    send_packet(
+        socket,
+        &NetworkPacket::Cursor(CursorPacket { point, color: color.into(), name: name.to_string() }),
+    );
 }
 
 pub fn send_packet(socket: &mut WebRtcSocket, packet: &NetworkPacket) {
@@ -144,6 +198,7 @@ pub fn handle_incoming(
     peer_current_stroke: &mut HashMap<PeerId, usize>,
     canvas_revision: &mut u64,
     local_stroke_idx: &mut Option<usize>,
+    peer_cursors: &mut HashMap<PeerId, PeerCursor>,
 ) {
     for (peer, packet_bytes) in socket.channel_mut(0).receive() {
         match bincode::deserialize::<NetworkPacket>(&packet_bytes) {
@@ -182,6 +237,12 @@ pub fn handle_incoming(
                     peer_current_stroke.clear();
                     *local_stroke_idx = None;
                 }
+            }
+            Ok(NetworkPacket::Cursor(packet)) => {
+                peer_cursors.insert(
+                    peer,
+                    PeerCursor { point: packet.point, color: packet.color.into(), name: packet.name },
+                );
             }
             Err(_e) => eprintln!("Bad packet"),
         }

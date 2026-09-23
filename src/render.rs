@@ -1,6 +1,9 @@
 use macroquad::prelude::*;
 use crate::canvas::{self, CANVAS_HEIGHT, CANVAS_WIDTH};
+use crate::network::PeerCursor;
 use crate::stroke::Stroke;
+use matchbox_socket::PeerId;
+use std::collections::HashMap;
 
 pub fn render_stroke (strokes: &mut Vec<Stroke>, pan_x: f32, pan_y: f32, zoom: f32) {
     for drawn_stroke in strokes.iter() {
@@ -28,6 +31,32 @@ pub fn render_stroke (strokes: &mut Vec<Stroke>, pan_x: f32, pan_y: f32, zoom: f
                 }
             }
         }
+}
+
+// Draws a small ring-and-dot cursor for each peer's last-known position, in
+// the color they currently have selected, with their name labeled alongside
+// it, so everyone can see where the rest of the lobby is pointing, who's
+// pointing it, and what they're about to draw with.
+pub fn render_peer_cursors(peer_cursors: &HashMap<PeerId, PeerCursor>, pan_x: f32, pan_y: f32, zoom: f32) {
+    for cursor in peer_cursors.values() {
+        let (x, y) = cursor.point;
+        let (sx, sy) = canvas::canvas_to_screen(x as f32, y as f32, pan_x, pan_y, zoom);
+        draw_circle_lines(sx, sy, 7.0, 2.0, cursor.color);
+        draw_circle(sx, sy, 2.5, cursor.color);
+
+        let label_size = 14.0;
+        let dims = measure_text(&cursor.name, None, label_size as u16, 1.0);
+        let label_x = sx + 12.0;
+        let label_y = sy - 10.0;
+        draw_rectangle(
+            label_x - 4.0,
+            label_y - dims.height,
+            dims.width + 8.0,
+            dims.height + 6.0,
+            Color::new(0.0, 0.0, 0.0, 0.55),
+        );
+        draw_text(&cursor.name, label_x, label_y, label_size, cursor.color);
+    }
 }
 
 // Draws the fixed canvas's edges (in screen space, given the current pan/zoom)

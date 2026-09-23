@@ -359,7 +359,7 @@ pub fn draw_color_wheel(current_color: &mut Color, open: &mut bool, picking: &mu
 }
 
 // Converts hue (degrees, 0-360), saturation and value (both 0-1) to an RGB color.
-fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color {
+pub(crate) fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color {
     let c = v * s;
     let h_prime = h / 60.0;
     let x = c * (1.0 - (h_prime % 2.0 - 1.0).abs());
