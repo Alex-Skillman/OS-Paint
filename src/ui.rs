@@ -17,6 +17,7 @@ const HOVER_ICON: Color = Color::new(0.88, 0.88, 0.90, 1.0);
 const SELECTED_BG: Color = Color::new(0.30, 0.55, 0.98, 1.0);
 const SELECTED_ICON: Color = WHITE;
 const SHADOW: Color = Color::new(0.0, 0.0, 0.0, 0.25);
+const DISABLED_ICON: Color = Color::new(0.62, 0.62, 0.66, 0.35);
 
 const TOOLS: [Tool; 3] = [Tool::Pen, Tool::Eraser, Tool::StrokeEraser];
 
@@ -53,12 +54,21 @@ const TRACK_IDLE: Color = Color::new(1.0, 1.0, 1.0, 0.12);
 pub struct ToolbarClick {
     pub menu: bool,
     pub color_swatch: bool,
+    pub undo: bool,
+    pub redo: bool,
 }
 
 // Draws the toolbar and handles clicks on it, updating `current_tool` when a
 // tool button is pressed and `current_color` when a palette swatch is
-// clicked. Call once per frame.
-pub fn draw_toolbar(current_tool: &mut Tool, current_color: &mut Color, palette: &[Color]) -> ToolbarClick {
+// clicked. `can_undo`/`can_redo` dim the undo/redo buttons and suppress their
+// clicks when there's nothing to do. Call once per frame.
+pub fn draw_toolbar(
+    current_tool: &mut Tool,
+    current_color: &mut Color,
+    palette: &[Color],
+    can_undo: bool,
+    can_redo: bool,
+) -> ToolbarClick {
     let screen_w = screen_width();
 
     draw_rounded_rect_bottom(0.0, 0.0, screen_w, TOOLBAR_HEIGHT, BAR_RADIUS, BG);
@@ -144,8 +154,49 @@ pub fn draw_toolbar(current_tool: &mut Tool, current_color: &mut Color, palette:
         px += PALETTE_SWATCH_RADIUS * 2.0 + PALETTE_GAP;
     }
 
-    // Docked to the top-right corner, separate from the left-aligned tool group.
+    // Docked to the top-right corner: undo, redo, then the color swatch.
     let swatch_rect = Rect::new(screen_w - SIDE_PADDING - BUTTON_WIDTH, button_y, BUTTON_WIDTH, button_height);
+    let redo_rect = Rect::new(swatch_rect.x - BUTTON_GAP * 2.0 - BUTTON_WIDTH, button_y, BUTTON_WIDTH, button_height);
+    let undo_rect = Rect::new(redo_rect.x - BUTTON_GAP - BUTTON_WIDTH, button_y, BUTTON_WIDTH, button_height);
+
+    let undo_hovered = can_undo && undo_rect.contains(Vec2::new(mouse_x, mouse_y));
+    if undo_hovered {
+        draw_rounded_rect(undo_rect.x, undo_rect.y, undo_rect.w, undo_rect.h, BUTTON_RADIUS, HOVER_BG);
+    }
+    draw_undo_redo_icon(
+        undo_rect.x + undo_rect.w / 2.0,
+        undo_rect.y + undo_rect.h / 2.0,
+        button_height * 0.62,
+        if !can_undo {
+            DISABLED_ICON
+        } else if undo_hovered {
+            HOVER_ICON
+        } else {
+            IDLE_ICON
+        },
+        false,
+    );
+    let undo_clicked = undo_hovered && clicked;
+
+    let redo_hovered = can_redo && redo_rect.contains(Vec2::new(mouse_x, mouse_y));
+    if redo_hovered {
+        draw_rounded_rect(redo_rect.x, redo_rect.y, redo_rect.w, redo_rect.h, BUTTON_RADIUS, HOVER_BG);
+    }
+    draw_undo_redo_icon(
+        redo_rect.x + redo_rect.w / 2.0,
+        redo_rect.y + redo_rect.h / 2.0,
+        button_height * 0.62,
+        if !can_redo {
+            DISABLED_ICON
+        } else if redo_hovered {
+            HOVER_ICON
+        } else {
+            IDLE_ICON
+        },
+        true,
+    );
+    let redo_clicked = redo_hovered && clicked;
+
     let swatch_hovered = swatch_rect.contains(Vec2::new(mouse_x, mouse_y));
     if swatch_hovered {
         draw_rounded_rect(swatch_rect.x, swatch_rect.y, swatch_rect.w, swatch_rect.h, BUTTON_RADIUS, HOVER_BG);
@@ -161,6 +212,8 @@ pub fn draw_toolbar(current_tool: &mut Tool, current_color: &mut Color, palette:
     ToolbarClick {
         menu: menu_clicked,
         color_swatch: color_swatch_clicked,
+        undo: undo_clicked,
+        redo: redo_clicked,
     }
 }
 
@@ -320,6 +373,28 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> Color {
     };
     let m = v - c;
     Color::new(r + m, g + m, b + m, 1.0)
+}
+
+// A curved arrow icon (an arc with a triangular arrowhead) used for both the
+// undo and redo buttons. `flipped` mirrors it horizontally so the arrowhead
+// points the other way, distinguishing redo from undo.
+fn draw_undo_redo_icon(cx: f32, cy: f32, size: f32, color: Color, flipped: bool) {
+    let radius = size * 0.34;
+    let thickness = size * 0.15;
+    let mirror = if flipped { -1.0 } else { 1.0 };
+
+    // A ~280-degree arc leaves a gap near the top where the arrowhead sits.
+    let rotation = if flipped { 220.0 } else { -40.0 };
+    draw_arc(cx, cy, 24, radius, rotation, thickness, 280.0, color);
+
+    let head_size = size * 0.28;
+    let tip = Vec2::new(cx + mirror * radius * 0.86, cy - radius * 0.5);
+    draw_triangle(
+        tip + vec2(0.0, -head_size * 0.55),
+        tip + vec2(mirror * head_size * 0.95, head_size * 0.15),
+        tip + vec2(-mirror * head_size * 0.15, head_size * 0.7),
+        color,
+    );
 }
 
 // A hamburger icon (three stacked bars) for the menu button.

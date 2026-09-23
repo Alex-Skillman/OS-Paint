@@ -76,6 +76,57 @@ fn remember_color(palette: &mut Vec<Color>, color: Color) {
     }
 }
 
+// How many undo steps are kept around.
+const MAX_UNDO_STEPS: usize = 50;
+
+// Records the canvas state just before a new discrete drawing action (a whole
+// pen stroke, or an erase/stroke-erase drag) starts, so Undo can restore it.
+// Starting a new action clears the redo stack, matching standard undo/redo
+// semantics (you can't redo past a fresh edit).
+fn push_undo_snapshot(undo_stack: &mut Vec<Vec<Stroke>>, redo_stack: &mut Vec<Vec<Stroke>>, strokes: &[Stroke]) {
+    undo_stack.push(strokes.to_vec());
+    if undo_stack.len() > MAX_UNDO_STEPS {
+        undo_stack.remove(0);
+    }
+    redo_stack.clear();
+}
+
+// Restores the previous canvas snapshot (if any) and, when connected to a
+// lobby, immediately broadcasts the result so peers converge to it instead of
+// waiting for the periodic snapshot.
+fn apply_undo(
+    undo_stack: &mut Vec<Vec<Stroke>>,
+    redo_stack: &mut Vec<Vec<Stroke>>,
+    strokes: &mut Vec<Stroke>,
+    canvas_revision: &mut u64,
+    network: &mut Option<NetworkSession>,
+) {
+    if let Some(previous) = undo_stack.pop() {
+        redo_stack.push(std::mem::replace(strokes, previous));
+        *canvas_revision += 1;
+        if let Some(net) = network.as_mut() {
+            send_canvas_snapshot(&mut net.socket, strokes, *canvas_revision);
+        }
+    }
+}
+
+// The reverse of `apply_undo`: reapplies a snapshot that was undone.
+fn apply_redo(
+    undo_stack: &mut Vec<Vec<Stroke>>,
+    redo_stack: &mut Vec<Vec<Stroke>>,
+    strokes: &mut Vec<Stroke>,
+    canvas_revision: &mut u64,
+    network: &mut Option<NetworkSession>,
+) {
+    if let Some(next) = redo_stack.pop() {
+        undo_stack.push(std::mem::replace(strokes, next));
+        *canvas_revision += 1;
+        if let Some(net) = network.as_mut() {
+            send_canvas_snapshot(&mut net.socket, strokes, *canvas_revision);
+        }
+    }
+}
+
 #[macroquad::main("OS-Paint")]
 async fn main() {
     // Create a tokio runtime for the WebRTC signaling/message-loop background task
@@ -112,6 +163,11 @@ async fn main() {
     let mut color_wheel_open = false;
     let mut color_wheel_picking = false;
     let mut palette: Vec<Color> = DEFAULT_PALETTE.to_vec();
+
+    // Undo/redo history, as full canvas snapshots taken before each discrete
+    // drawing action (see `push_undo_snapshot`).
+    let mut undo_stack: Vec<Vec<Stroke>> = Vec::new();
+    let mut redo_stack: Vec<Vec<Stroke>> = Vec::new();
 
     // Find the last tool used
     let mut peer_current_stroke: HashMap<PeerId, usize> = HashMap::new();
@@ -201,8 +257,28 @@ async fn main() {
                 menu_state = MenuState::new();
             }
 
+            let ctrl_held = is_key_down(KeyCode::LeftControl) || is_key_down(KeyCode::RightControl);
+            if ctrl_held && is_key_pressed(KeyCode::Z) {
+                apply_undo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+                local_stroke_idx = None;
+                peer_current_stroke.clear();
+            }
+            if ctrl_held && is_key_pressed(KeyCode::Y) {
+                apply_redo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+                local_stroke_idx = None;
+                peer_current_stroke.clear();
+            }
+
             // Pans the view via right-click drag, and zooms via the mouse wheel
             handle_pan(&mut pan_x, &mut pan_y, &mut zoom, &mut pan_drag_origin);
+
+            // A left click on the canvas starts a new discrete drawing action
+            // (a whole pen stroke, or an erase/stroke-erase drag) — snapshot
+            // the canvas now so Undo can restore exactly this point.
+            let (raw_mouse_x, raw_mouse_y) = mouse_position();
+            if is_mouse_button_pressed(MouseButton::Left) && !over_ui(raw_mouse_x, raw_mouse_y) {
+                push_undo_snapshot(&mut undo_stack, &mut redo_stack, &strokes);
+            }
 
             // Gets the user input to draw
             if handle_tool(
@@ -232,13 +308,29 @@ async fn main() {
         render_stroke(&mut strokes, pan_x, pan_y, zoom);
 
         // Draws the tool selection bar on top of the canvas
-        let toolbar_click = draw_toolbar(&mut current_tool, &mut current_color, &palette);
+        let toolbar_click = draw_toolbar(
+            &mut current_tool,
+            &mut current_color,
+            &palette,
+            !undo_stack.is_empty(),
+            !redo_stack.is_empty(),
+        );
         if toolbar_click.menu && !menu_was_open && !wheel_was_open {
             menu_open = true;
             menu_state = MenuState::new();
         }
         if toolbar_click.color_swatch {
             color_wheel_open = !color_wheel_open;
+        }
+        if toolbar_click.undo {
+            apply_undo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+            local_stroke_idx = None;
+            peer_current_stroke.clear();
+        }
+        if toolbar_click.redo {
+            apply_redo(&mut undo_stack, &mut redo_stack, &mut strokes, &mut canvas_revision, &mut network);
+            local_stroke_idx = None;
+            peer_current_stroke.clear();
         }
 
         // Draws the brush/eraser size slider on the right edge of the screen
@@ -259,6 +351,8 @@ async fn main() {
                     let code = generate_room_code();
                     network = Some(connect_to_room(&signaling_server, &code));
                     last_snapshot_sent = Instant::now();
+                    undo_stack.clear();
+                    redo_stack.clear();
                     menu_state = MenuState::new();
                 }
                 MenuAction::Join(code) => {
@@ -270,6 +364,8 @@ async fn main() {
                     local_stroke_idx = None;
                     network = Some(connect_to_room(&signaling_server, &code));
                     last_snapshot_sent = Instant::now();
+                    undo_stack.clear();
+                    redo_stack.clear();
                     menu_open = false;
                 }
                 MenuAction::Leave => {
@@ -278,6 +374,8 @@ async fn main() {
                     }
                     peer_current_stroke.clear();
                     local_stroke_idx = None;
+                    undo_stack.clear();
+                    redo_stack.clear();
                     menu_state = MenuState::new();
                 }
             }

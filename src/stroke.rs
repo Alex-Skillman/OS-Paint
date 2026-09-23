@@ -6,6 +6,7 @@ pub enum Tool {
     Eraser,
     StrokeEraser,
 }
+#[derive(Clone)]
 pub struct Stroke {
     pub size: u16,
     pub color: Color,
